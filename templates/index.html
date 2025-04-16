@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+    {% for cal in calendarios %}
+      <div class="bg-white rounded-2xl p-4 shadow hover:shadow-md flex flex-col" x-data>
+        <div class="flex-1">
+          <h2 class="text-lg font-semibold mb-1">{{ cal.summary }}</h2>
+          <p class="text-sm text-gray-500 break-all">ID: {{ cal.id }}</p>
+        </div>
+        <button class="self-end mt-4 text-sky-600 hover:text-sky-800" title="Editar" type="button" @click="$dispatch('open-modal', 'modal-edit-{{ cal.id }}')">
+          ✎
+        </button>
+      </div>
+
+      <!-- Modal de edição por calendário (gerado aqui para simplicidade) -->
+      <div x-data="modal('modal-edit-{{ cal.id }}')" x-show="open" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+        <div @click.outside="open=false" class="bg-white rounded-2xl w-full max-w-2xl p-6 space-y-4">
+          <h3 class="text-xl font-semibold">Editar calendário</h3>
+          <form x-data="{ name: '{{ cal.summary|escape }}', users: [] }" x-init="$watch('open', async (value) => { if (value) { Object.assign($data, editCal('{{ cal.id }}', '{{ cal.summary|escape }}')); await $data.init(); }})" class="space-y-4" @submit.prevent="submit">
+            <label class="block">
+              <span class="text-sm font-medium">Nome</span>
+              <input x-model="name" type="text" class="mt-1 w-full rounded-xl border-gray-300" required>
+            </label>
+
+            <template x-for="u in users" :key="u.email">
+				<div class="flex items-center gap-2">
+					<span class="flex-1 text-sm" x-text="u.email"></span>
+				
+					<select x-model="u.role"
+							class="block w-48 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm py-1">
+						<option value="reader">Ler detalhes</option>
+						<option value="writer">Editar eventos</option>
+						<option value="owner">Gerenciar</option>
+						<option value="freeBusyReader">Ver disp./ocupado</option>
+						</select>
+					<button type="button" @click="removeUser(u.email)" class="text-red-600">×</button>
+				</div>
+            </template>
+
+            <label class="block">
+              <span class="text-sm font-medium">Adicionar usuários</span>
+              <select id="add-users-{{ cal.id }}" multiple></select>
+            </label>
+
+            <div class="flex justify-end gap-2 pt-2">
+              <button type="button" @click="open=false" class="px-4 py-2 rounded-xl bg-gray-200">Cancelar</button>
+              <button type="submit" class="px-4 py-2 rounded-xl bg-indigo-600 text-white">Alterar</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+
+<script>
+function editCal(id, currentName) {
+    // Variável para a instância do select de adicionar usuários
+    let addUsersChoicesInstance = null;
+
+    return {
+        name: currentName,
+        users: [], // Populated by init
+
+        // Limpa instâncias do Choices ao fechar o modal (BOA PRÁTICA)
+        destroyChoices() {
+            console.log(`Destroying Choices instances for modal ${id}`);
+            if (addUsersChoicesInstance && typeof addUsersChoicesInstance.destroy === 'function') {
+                addUsersChoicesInstance.destroy();
+            }
+            addUsersChoicesInstance = null;
+        },
+
+        async init() { // Runs when modal opens (x-init/$watch)
+            console.log(`Initializing editCal for ${id}. Fetching users...`);
+            // Limpar instâncias anteriores se o modal for reaberto sem recarregar a página
+            this.destroyChoices();
+
+            try {
+                const r = await fetch(`/calendar/${id}/users`);
+                if (!r.ok) throw new Error(`Erro ${r.status} ao buscar usuários`);
+                const data = await r.json();
+
+                // Processa usuários recebidos
+                this.users = data.users ? data.users.map(user => ({ ...user })) : [];
+                console.log('Users loaded:', this.users);
+
+                // USA $nextTick para garantir que o x-for do Alpine terminou de renderizar
+                this.$nextTick(() => {
+                    console.log('DOM atualizado ($nextTick). Inicializando Choices...');
+
+                    // Encontra o elemento do modal atual para buscar selects DENTRO dele
+                    const modalElement = document.querySelector(`[x-data^="modal('modal-edit-${id}')"]`);
+                    if (!modalElement) {
+                         console.error("Não foi possível encontrar o elemento do modal para inicializar Choices.");
+                         return;
+                    }
+
+                    // Inicializa Choices para cada SELECT de permissão dentro do x-for
+
+                    // Inicializa Choices para o select "Adicionar usuários" UMA VEZ
+					const addUsersSelectId = `add-users-${id}`;
+                    const addUsersSelectElement = modalElement.querySelector(`[id="${addUsersSelectId}"]`);
+                    if (addUsersSelectElement && !addUsersChoicesInstance) { // Só inicializa se não tiver instância
+                        console.log('Inicializando Choices para Adicionar Usuários:', addUsersSelectElement);
+                        addUsersChoicesInstance = new Choices(addUsersSelectElement, {
+                            removeItemButton: true,
+                            duplicateItemsAllowed: false,
+                            editItems: false,
+                            placeholder: true,
+                            placeholderValue: 'Emails (Enter, Vírgula, Colar)...',
+                            addItems: true,
+                            delimiter: ',',
+                            addItemFilter: function(value) { /* ... seu filtro de email aqui ... */
+                                 if (!value) { return false; }
+                                 const regex = /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+                                 return regex.test(String(value).toLowerCase());
+                             }
+                        });
+                        // Adicionar listeners de keydown/paste se necessário aqui, similar ao modal bulk
+                        // ... (código dos listeners keydown/paste adaptado) ...
+                    }
+                    console.log('Inicialização de Choices concluída para o modal.');
+					// --- ADICIONAR LISTENERS CUSTOMIZADOS AQUI ---
+					if (addUsersChoicesInstance && addUsersChoicesInstance.input && addUsersChoicesInstance.input.element) {
+						const addUsersInputElement = addUsersChoicesInstance.input.element;
+						console.log("Adicionando listeners (keydown, paste) ao input 'Adicionar Usuários' do modal de edição.");
+
+						// Listener Keydown (Enter/Vírgula)
+						addUsersInputElement.addEventListener('keydown', (event) => {
+							if (event.keyCode === 13 || event.keyCode === 188) { // Enter ou Vírgula
+								const value = addUsersInputElement.value.trim();
+								if (value) {
+									event.preventDefault();
+									if (addUsersChoicesInstance.config.addItemFilter(value)) {
+										const currentValues = addUsersChoicesInstance.getValue(true);
+										if (!currentValues.includes(value)) {
+											addUsersChoicesInstance.setValue([...currentValues, value]);
+											addUsersChoicesInstance.clearInput();
+										} else {
+											addUsersChoicesInstance.clearInput();
+										}
+									} else {
+										addUsersChoicesInstance.clearInput();
+									}
+								} else if (event.keyCode === 13) {
+									event.preventDefault();
+								}
+							}
+						});
+
+						// Listener Paste
+						addUsersInputElement.addEventListener('paste', (event) => {
+							event.preventDefault();
+							const pastedText = (event.clipboardData || window.clipboardData).getData('text');
+							const potentialEmails = pastedText.split(/[ ,\n]+/)
+														.map(email => email.trim())
+														.filter(email => email);
+							if (potentialEmails.length > 0) {
+								const validEmailsToAdd = potentialEmails.filter(email => addUsersChoicesInstance.config.addItemFilter(email));
+								if (validEmailsToAdd.length > 0) {
+									const currentValues = addUsersChoicesInstance.getValue(true);
+									const combinedValues = [...new Set([...currentValues, ...validEmailsToAdd])];
+									addUsersChoicesInstance.setValue(combinedValues);
+								} else {
+									window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Nenhum email válido colado.', type: 'error' } }));
+								}
+							}
+						});
+					} else {
+						console.error("Input do addUsersChoicesInstance não encontrado para adicionar listeners.");
+					}
+                });
+            } catch (e) {
+                console.error("Erro no init do editCal:", e);
+                this.$dispatch('toast', { msg: `Erro ao carregar usuários: ${e.message}`, type: 'error' });
+            }
+        },
+        async submit() {
+            console.groupCollapsed("--- Submit Edit Modal ---"); // Agrupa logs do submit
+            const submitButton = this.$root.querySelector('button[type="submit"]'); // Botão dentro do form Alpine
+            const originalButtonText = submitButton ? submitButton.textContent : 'Alterar';
+            if(submitButton) submitButton.disabled = true;
+            if(submitButton) submitButton.textContent = 'Salvando...';
+
+            let errorsOccurred = false;
+            let changesMade = false; // Flag para saber se algo foi alterado
+
+            // --- Dados Coletados ---
+            const newName = this.name.trim();
+            // 'id' e 'currentName' estão disponíveis do escopo da função editCal
+            // 'addUsersChoicesInstance' também deve estar acessível (definido fora do return)
+            const usersToAdd = addUsersChoicesInstance ? addUsersChoicesInstance.getValue(true) : [];
+
+            console.log("Submit Edit - Nome Original:", currentName);
+            console.log("Submit Edit - Novo Nome:", newName);
+            console.log("Submit Edit - Usuários a Adicionar:", usersToAdd);
+            // TODO: Implementar coleta de dados para edições/remoções de usuários existentes
+
+            // --- Passo 1: Renomear Calendário (se o nome mudou) ---
+            if (newName && newName !== currentName) {
+                console.log("Nome alterado. Enviando requisição para renomear...");
+                try {
+                    const renamePayload = new FormData(); // Endpoint de rename espera FormData
+                    renamePayload.append('name', newName);
+                    const renameResp = await fetch(`/calendar/${id}/rename`, { method: 'POST', body: renamePayload });
+                    const renameData = await renameResp.json();
+                    if (!renameResp.ok || !renameData.success) {
+                        throw new Error(renameData.error || `Erro ${renameResp.status}`);
+                    }
+                    console.log("Calendário renomeado com sucesso.");
+                    changesMade = true;
+                } catch (error) {
+                    console.error("Erro ao renomear calendário:", error);
+                    this.$dispatch('toast', { msg: `Erro ao renomear: ${error.message}`, type: 'error' });
+                    errorsOccurred = true; // Marca erro para não prosseguir com outras ações se desejado
+                }
+            } else {
+                 console.log("Nome do calendário não foi alterado.");
+            }
+
+            // --- Passo 2: Adicionar Novos Usuários (se houver e sem erros anteriores) ---
+            // Só prossegue se não houve erro ao renomear (opcional, pode tentar adicionar mesmo se renomear falhar)
+            if (!errorsOccurred && usersToAdd && usersToAdd.length > 0) {
+                console.log(`Adicionando ${usersToAdd.length} novos usuários via /acl/bulk...`);
+                const defaultRoleForNewUsers = 'reader'; // <<< DEFINA A ROLE PADRÃO PARA NOVOS USUÁRIOS AQUI
+                console.log(`Role padrão para novos usuários: ${defaultRoleForNewUsers}`);
+
+                const addPayload = {
+                    calendars: [id], // Endpoint /acl/bulk espera uma LISTA de calendários
+                    action: "adicionar",
+                    users: usersToAdd,
+                    role: defaultRoleForNewUsers
+                };
+                console.log("Payload para /acl/bulk (adicionar):", addPayload);
+
+                try {
+                    const addResp = await fetch(`/acl/bulk`, { // Chama o endpoint bulk
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(addPayload)
+                    });
+                    const addData = await addResp.json().catch(() => ({ error: `Erro ${addResp.status}: Resposta inválida do servidor` }));
+
+                    if (!addResp.ok) { // Verifica se o status HTTP foi 2xx
+                        throw new Error(addData.error || `Erro ${addResp.status} ao adicionar usuários`);
+                    }
+                    // Verificar se o backend retorna um sucesso explícito pode ser bom
+                    // if (!addData.result) { throw new Error('Backend reportou falha ao adicionar usuários.'); }
+
+                    console.log("Usuários adicionados com sucesso via /acl/bulk.");
+                    changesMade = true;
+                    if(addUsersChoicesInstance) addUsersChoicesInstance.removeActiveItems(); // Limpa os chips adicionados do input
+
+                } catch (error) {
+                    console.error("Erro ao adicionar usuários via /acl/bulk:", error);
+                    this.$dispatch('toast', { msg: `Erro ao adicionar: ${error.message}`, type: 'error' });
+                    errorsOccurred = true;
+                }
+            } else if (usersToAdd && usersToAdd.length > 0) {
+                console.log("Adição de usuários pulada devido a erro anterior.");
+            } else {
+                console.log("Nenhum usuário novo para adicionar.");
+            }
+
+            // --- Passo 3: Salvar Edições/Remoções de Usuários Existentes ---
+            if (!errorsOccurred) {
+                 // TODO: Adicionar lógica aqui se/quando implementar
+                 // - Detectar usuários removidos (comparar this.users com lista original?)
+                 // - Detectar roles alteradas (comparar this.users com lista original?)
+                 // - Fazer chamadas separadas para /acl/bulk com action: "remover" e action: "editar"
+                 // - Marcar changesMade = true se houver sucesso
+                console.log("Lógica para editar/remover usuários existentes AINDA NÃO IMPLEMENTADA.");
+            }
+
+
+            // --- Finalização ---
+            if(submitButton) submitButton.disabled = false; // Reabilita o botão
+            if(submitButton) submitButton.textContent = originalButtonText;
+
+            if (!errorsOccurred && changesMade) {
+                this.$dispatch('toast', { msg: 'Alterações salvas com sucesso!', type: 'success' });
+                setTimeout(() => window.location.reload(), 1200); // Recarrega para ver estado atualizado
+            } else if (!errorsOccurred && !changesMade) {
+                 this.$dispatch('toast', { msg: 'Nenhuma alteração salva.', type: 'info' });
+                 // Opcional: Fechar o modal se nenhuma alteração foi feita
+                 // this.handleClose();
+            }
+            // Se houve erro, o toast de erro já foi mostrado nas seções catch
+
+            console.groupEnd(); // Fecha grupo de logs do submit
+        }, // Fim do submit()
+
+        async removeUser(emailToRemove) {
+            console.log('Tentando remover usuário:', emailToRemove);
+
+             // 1. Atualização Visual Otimista (remove da lista local)
+             this.users = this.users.filter(u => u.email !== emailToRemove);
+             this.$dispatch('toast', { msg: `Tentando remover ${emailToRemove}...`, type: 'info' }); // Feedback
+
+             // 2. Chamada Backend (Exemplo - Endpoint precisa ser criado)
+             try {
+                 // Usar DELETE é semanticamente correto para remoção de recurso específico
+                 const response = await fetch(`/calendar/<span class="math-inline">\{id\}/user/</span>{encodeURIComponent(emailToRemove)}`, {
+                     method: 'DELETE'
+                 });
+                 if (!response.ok) {
+                     const errorData = await response.json().catch(() => ({}));
+                     throw new Error(errorData.error || `Erro ${response.status} ao remover usuário.`);
+                 }
+                 // Sucesso
+                 console.log(`Usuário ${emailToRemove} removido com sucesso.`);
+                 this.$dispatch('toast', { msg: `Usuário ${emailToRemove} removido!`, type: 'success' });
+                 // A lista visual já foi atualizada
+
+             } catch (error) {
+                  console.error("Erro ao remover usuário (backend):", error);
+                  this.$dispatch('toast', { msg: `Erro ao remover ${emailToRemove}: ${error.message}`, type: 'error' });
+                  // Opcional: Readicionar o usuário à lista visual se a remoção falhou
+                  // (requer buscar o usuário original novamente ou não ter feito a remoção otimista)
+             }
+        }, // Fim do removeUser()
+
+        // Adicionar função para limpar/destruir Choices ao fechar o modal
+        handleClose() {
+             this.open = false; // Assumindo que 'open' controla a visibilidade via x-show
+             this.destroyChoices(); // Chama a limpeza
+        }
+
+    } // Fim do objeto retornado
+}
+</script>
+{% endblock %}

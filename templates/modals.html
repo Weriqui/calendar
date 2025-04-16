@@ -1,0 +1,546 @@
+<!-- Modal CRIAR calendário -->
+<div x-data="modal('modal-create')" x-show="open" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+    <div @click.outside="open=false" class="bg-white rounded-2xl w-full max-w-md p-6 space-y-4">
+        <h3 class="text-xl font-semibold">Novos calendários</h3> <form id="form-create-calendars" class="space-y-4">
+        <label class="block">
+            <span class="text-sm font-medium">Nomes dos novos calendários</span>
+            <select id="create-calendar-names" name="names" multiple></select>
+            <span class="text-xs text-gray-500 block">Use Enter, vírgula ou cole para adicionar múltiplos nomes.</span>
+        </label>
+        <div class="flex justify-end gap-2 pt-2">
+            <button type="button" @click="open=false" class="px-4 py-2 rounded-xl bg-gray-200">Cancelar</button>
+            <button type="submit" class="px-4 py-2 rounded-xl bg-indigo-600 text-white">Criar calendários</button>
+            </div>
+        </form>
+    </div>
+</div>
+<!-- Modal BULK ACL -->
+<div x-data="modal('modal-bulk')" x-show="open" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 overflow-auto">
+  <div @click.outside="open=false" class="bg-white rounded-2xl w-full max-w-2xl p-6 space-y-4">
+    <h3 class="text-xl font-semibold">Operações em massa</h3>
+    <form id="form-bulk" class="space-y-4">
+      <label class="block">
+        <span class="text-sm font-medium">Calendários</span>
+        <select id="bulk-cals" multiple></select>
+      </label>
+      <label class="block">
+        <span class="text-sm font-medium">Operação</span>
+        <select id="bulk-action" class="choices">
+          <option>SELECIONE</option>
+          <option value="adicionar">Adicionar usuários</option>
+          <option value="remover">Remover usuários</option>
+          <option value="editar">Editar permissões dos usuários</option>
+        </select>
+      </label>
+      <div id="bulk-users-wrapper" class="hidden">
+        <label class="block">
+          <span class="text-sm font-medium">Usuários</span>
+          <select id="bulk-users" multiple></select>
+        </label>
+      </div>
+      <div id="bulk-role-wrapper" class="hidden">
+        <label class="block">
+          <span class="text-sm font-medium">Permissão</span>
+          <select id="bulk-role" class="choices">
+            <option value="freeBusyReader">Ver apenas os níveis disponível/ocupado</option>
+            <option value="reader">Mais detalhes de todos os eventos</option>
+            <option value="writer">Fazer alterações nos eventos</option>
+            <option value="owner">Fazer alterações e gerenciar compartilhamento</option>
+          </select>
+        </label>
+      </div>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" @click="open=false" class="px-4 py-2 rounded-xl bg-gray-200">Cancelar</button>
+        <button type="submit" class="px-4 py-2 rounded-xl bg-indigo-600 text-white">Executar</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    console.log("DOMContentLoaded in modals.html disparado.");
+
+    // --- Referências aos Elementos ---
+    const calsSelectElement = document.getElementById('bulk-cals');
+    const actionSelectElement = document.getElementById('bulk-action');
+    const usersSelectElement = document.getElementById('bulk-users');
+    const usersWrapper = document.getElementById('bulk-users-wrapper');
+    const roleWrapper = document.getElementById('bulk-role-wrapper');
+    // const formCreate = document.getElementById('form-create'); // <- Não vamos mais usar este ID
+    const formCreateCalendars = document.getElementById('form-create-calendars'); // <- Novo ID
+    const formBulk = document.getElementById('form-bulk');
+    const createCalNamesElement = document.getElementById('create-calendar-names'); // <- Novo Select
+
+    // --- Verificação de Elementos Essenciais ---
+    if (!calsSelectElement || !actionSelectElement || !usersSelectElement || !usersWrapper || !roleWrapper || !formBulk || !createCalNamesElement || !formCreateCalendars) {
+        console.error("Um ou mais elementos essenciais do modal bulk (ou form) não encontrados! Funcionalidade pode estar comprometida.");
+        // Considerar desabilitar botões ou mostrar erro mais visível se elementos críticos faltarem.
+        // Não continuar se elementos cruciais como os selects não existirem.
+        if (!calsSelectElement || !actionSelectElement || !usersSelectElement) return;
+    }
+
+    // --- Inicialização do Choices.js (APENAS UMA VEZ) ---
+    let calsSelect, actionSelect, usersSelect, createCalChoices; // Declarar createCalChoices aqui
+    try {
+        console.log("Inicializando Choices.js...");
+
+        calsSelect = new Choices(calsSelectElement, {
+            removeItemButton: true,
+            searchEnabled: true,
+            placeholder: true,
+            placeholderValue: 'Selecione um ou mais calendários...'
+        });
+
+        actionSelect = new Choices(actionSelectElement, {
+            searchEnabled: false, // Ação não precisa de busca
+            itemSelectText: 'Selecionar' // Texto do botão de seleção
+        });
+
+        // Configuração completa para o select de usuários
+        usersSelect = new Choices(usersSelectElement, {
+            removeItemButton: true,          // Permitir remover chips
+            duplicateItemsAllowed: false,    // Não permitir emails duplicados
+            editItems: false,                // Não permitir editar emails após adicionados
+            placeholder: true,
+            placeholderValue: 'Emails (Enter, Vírgula, Colar)...', // Placeholder instrutivo
+            addItems: true,                  // ESSENCIAL: Permitir adicionar itens novos
+            delimiter: ',',                  // Usar vírgula para criar chip ao digitar
+            addItemFilter: function(value) { // Filtro para validar emails antes de adicionar
+                if (!value) { return false; }
+                // Regex para validação básica de email
+                const regex = /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+                const isValid = regex.test(String(value).toLowerCase());
+                if (!isValid) {
+                    console.warn(`Email "${value}" REJEITADO pelo filtro.`);
+                    // Opcional: Mostrar feedback visual/toast
+                    window.dispatchEvent(new CustomEvent('toast', { detail: { msg: `Formato inválido: ${value}`, type: 'error' } }));
+                }
+                return isValid;
+            },
+        });
+        // <<< NOVA INICIALIZAÇÃO para Nomes de Calendários >>>
+        if (createCalNamesElement) {
+            createCalChoices = new Choices(createCalNamesElement, {
+                removeItemButton: true,
+                duplicateItemsAllowed: false, // Não permitir nomes duplicados
+                placeholder: true,
+                placeholderValue: 'Nomes (Enter, Vírgula, Colar)...',
+                addItems: true, // Permitir adicionar nomes que não existem
+                delimiter: ',', // Criar chip com vírgula
+                addItemFilter: function(value) { // Filtro para nomes de calendário
+                    const trimmedValue = value ? value.trim() : '';
+                    if (!trimmedValue) {
+                        // Rejeita strings vazias ou apenas com espaços
+                        return false;
+                    }
+                    // Você pode adicionar outras validações aqui se necessário
+                    // (ex: tamanho máximo, caracteres inválidos)
+                    // Por enquanto, aceita qualquer string não vazia.
+                    return true;
+                },
+            });
+            console.log("Choices.js inicializado para #create-calendar-names.");
+        } else {
+            console.warn("Elemento #create-calendar-names não encontrado para inicializar Choices.js");
+        }
+
+        
+        console.log("Choices.js inicializado.");
+
+        // --- Popular Select de Calendários (via Jinja/Backend) ---
+        console.log("Populando select de calendários...");
+        const initialCalendarChoices = {{ calendar_choices_list | tojson | safe }};
+        console.log("Opções de calendário recebidas:", initialCalendarChoices);
+
+        if (initialCalendarChoices && Array.isArray(initialCalendarChoices) && initialCalendarChoices.length > 0) {
+            calsSelect.setChoices(initialCalendarChoices, 'value', 'label', true);
+            console.log("Opções de calendário definidas.");
+        } else {
+            console.warn("Nenhuma opção de calendário válida para definir.");
+            if(calsSelect) {
+                calsSelect.disable();
+                calsSelect.clearStore();
+                calsSelect.setChoices([{value: '', label: 'Nenhum calendário carregado', disabled: true}], 'value', 'label', true);
+            }
+        }
+
+        // --- Adicionar Listeners Customizados para Input de Usuários (APENAS UMA VEZ) ---
+        if (usersSelect && usersSelect.input && usersSelect.input.element) {
+            const usersInputElement = usersSelect.input.element;
+            console.log("Adicionando listeners customizados (keydown, paste) ao input de usuários.");
+
+            // Listener Keydown (para Enter e Vírgula)
+            usersInputElement.addEventListener('keydown', (event) => {
+                // Código 13 = Enter, Código 188 = Vírgula
+                if (event.keyCode === 13 || event.keyCode === 188) {
+                    const value = usersInputElement.value.trim(); // Pega valor atual do input
+                    if (value) {
+                        event.preventDefault(); // Impede submit/digitar vírgula
+                        // Verifica se o valor passa no filtro de email
+                        if (usersSelect.config.addItemFilter(value)) {
+                            const currentValues = usersSelect.getValue(true); // Pega chips existentes
+                            if (!currentValues.includes(value)) { // Evita duplicatas
+                                console.log(`Adicionando item via ${event.keyCode === 13 ? 'Enter' : 'Vírgula'}:`, value);
+                                // Usa API setValue para adicionar o novo item (mais seguro)
+                                usersSelect.setValue([...currentValues, value]);
+                                usersSelect.clearInput(); // Limpa o campo de input após adicionar
+                            } else {
+                                console.log(`Item "${value}" já existe, limpando input.`);
+                                usersSelect.clearInput(); // Limpa se já existe
+                            }
+                        } else {
+                             // Filtro falhou (toast já deve ter sido mostrado pelo filtro), apenas limpa
+                             usersSelect.clearInput();
+                        }
+                    } else if (event.keyCode === 13) {
+                         event.preventDefault(); // Impede submit mesmo se vazio
+                    }
+                }
+            });
+
+            // Listener Paste (para colar emails)
+            usersInputElement.addEventListener('paste', (event) => {
+                event.preventDefault(); // Impede a colagem padrão
+                const pastedText = (event.clipboardData || window.clipboardData).getData('text');
+                console.log("Texto colado:", pastedText);
+                // Divide por vírgula, espaço ou quebra de linha
+                const potentialEmails = pastedText.split(/[ ,\n]+/)
+                                             .map(email => email.trim())
+                                             .filter(email => email); // Remove vazios
+                console.log("Emails potenciais da colagem:", potentialEmails);
+
+                if (potentialEmails.length > 0) {
+                    const validEmailsToAdd = potentialEmails.filter(email => usersSelect.config.addItemFilter(email));
+                    console.log("Emails válidos da colagem:", validEmailsToAdd);
+
+                    if (validEmailsToAdd.length > 0) {
+                        const currentValues = usersSelect.getValue(true);
+                        const combinedValues = [...new Set([...currentValues, ...validEmailsToAdd])]; // Junta e remove duplicatas
+                        console.log("Valores combinados para setar:", combinedValues);
+                        usersSelect.setValue(combinedValues); // Atualiza os chips
+                    } else {
+                        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Nenhum email válido encontrado no texto colado.', type: 'error' } }));
+                    }
+                }
+                // Não precisa limpar o input aqui, setValue geralmente faz isso
+            });
+
+        } else {
+            console.error("Elemento input do Choices.js para usuários não encontrado após inicialização!");
+        }
+
+        // <<< NOVOS Listeners Customizados para Input de Nomes de Calendário >>>
+        if (createCalChoices && createCalChoices.input && createCalChoices.input.element) {
+           const createCalInputElement = createCalChoices.input.element;
+           console.log("Adicionando listeners customizados (keydown, paste) ao input de nomes de calendário.");
+
+           // --- Listener Keydown (Adaptado) ---
+           createCalInputElement.addEventListener('keydown', (event) => {
+               if (event.keyCode === 13 || event.keyCode === 188) { // Enter or Comma
+                   const value = createCalInputElement.value.trim();
+                   if (value) {
+                       event.preventDefault();
+                       // Usa o filtro definido na configuração do createCalChoices
+                       if (createCalChoices.config.addItemFilter(value)) {
+                           const currentValues = createCalChoices.getValue(true);
+                           if (!currentValues.includes(value)) { // Evita duplicatas
+                               console.log(`Adicionando nome via ${event.keyCode === 13 ? 'Enter' : 'Vírgula'}:`, value);
+                               createCalChoices.setValue([...currentValues, value]);
+                               createCalChoices.clearInput();
+                           } else {
+                               console.log(`Nome "${value}" já existe, limpando input.`);
+                               createCalChoices.clearInput();
+                           }
+                       } else {
+                            // Filtro falhou (toast opcional)
+                            window.dispatchEvent(new CustomEvent('toast', { detail: { msg: `Nome inválido/vazio: ${value}`, type: 'error' } }));
+                            createCalChoices.clearInput();
+                       }
+                   } else if (event.keyCode === 13) {
+                        event.preventDefault(); // Impede submit se vazio
+                   }
+               }
+           });
+
+           // --- Listener Paste (Adaptado) ---
+           createCalInputElement.addEventListener('paste', (event) => {
+               event.preventDefault();
+               const pastedText = (event.clipboardData || window.clipboardData).getData('text');
+               console.log("Texto colado (nomes calendário):", pastedText);
+               // Divide por vírgula, espaço ou quebra de linha
+               const potentialNames = pastedText.split(/[ ,\n]+/)
+                                           .map(name => name.trim())
+                                           .filter(name => name); // Remove vazios
+               console.log("Nomes potenciais da colagem:", potentialNames);
+
+               if (potentialNames.length > 0) {
+                   // Usa o filtro definido na configuração do createCalChoices
+                   const validNamesToAdd = potentialNames.filter(name => createCalChoices.config.addItemFilter(name));
+                   console.log("Nomes válidos da colagem:", validNamesToAdd);
+
+                   if (validNamesToAdd.length > 0) {
+                       const currentValues = createCalChoices.getValue(true);
+                       const combinedValues = [...new Set([...currentValues, ...validNamesToAdd])]; // Junta e remove duplicatas
+                       console.log("Valores combinados para setar (nomes):", combinedValues);
+                       createCalChoices.setValue(combinedValues);
+                   } else {
+                       window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Nenhum nome válido encontrado no texto colado.', type: 'error' } }));
+                   }
+               }
+           });
+        } else {
+           console.error("Elemento input do Choices.js para criar calendário não encontrado após inicialização!");
+        }
+
+    } catch (error) { // Captura erros da inicialização geral ou adição de listeners
+        console.error("ERRO GRAVE durante inicialização/configuração do Choices.js em modals.html:", error);
+        // Informar o usuário pode ser útil aqui
+        window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Erro ao iniciar componentes do modal. Recarregue a página.', type: 'error' } }));
+        return; // Impede a execução do resto se a inicialização falhar
+    }
+
+    // --- Função para Atualizar Visibilidade e Conteúdo (NÃO REINICIALIZA CHOICES) ---
+    async function updateBulkUsers() {
+        const selectedAction = document.getElementById('bulk-action').value;
+        // Acessar calsSelect aqui (que deve estar definido no escopo externo)
+        const selectedCalendarIds = calsSelect ? calsSelect.getValue(true) : [];
+
+        console.groupCollapsed("--- updateBulkUsers ---"); // Agrupa logs para clareza
+        console.log("Ação Selecionada:", selectedAction, "(Tipo:", typeof selectedAction + ")");
+        console.log("Calendários Selecionados:", selectedCalendarIds);
+
+        const hasAction = !!selectedAction;
+        const hasCalendars = selectedCalendarIds && selectedCalendarIds.length > 0;
+
+        // Lógica Principal (Fetch / Limpar / Ocultar)
+        if ((selectedAction === 'remover' || selectedAction === 'editar') && hasCalendars) {
+            console.log("[Bloco Executado]: if (remover/editar com calendários)");
+            usersWrapper.classList.remove('hidden');
+            if(usersSelect) { // Verifica se usersSelect existe
+                usersSelect.clearStore();
+                usersSelect.setChoices([{value:'', label:'Carregando usuários...', disabled:true}], 'value', 'label', true);
+                usersSelect.disable();
+            }
+            try {
+                console.log("Fazendo fetch para /acl/users_for_calendars...");
+                const response = await fetch('/acl/users_for_calendars', {method: 'POST', headers: { 'Content-Type': 'application/json' },body: JSON.stringify({ calendars: selectedCalendarIds })});
+                if (!response.ok) { throw new Error(`Erro HTTP ${response.status}`); }
+                const data = await response.json();
+                console.log("Usuários recebidos:", data.users);
+                if(usersSelect) {
+                    usersSelect.enable();
+                    if (data.users && data.users.length > 0) {
+                        usersSelect.setChoices(data.users, 'value', 'label', true);
+                    } else {
+                        usersSelect.setChoices([{value:'', label:'Nenhum usuário encontrado', disabled:true}], 'value', 'label', true);
+                    }
+                }
+            } catch (error) {
+                console.error("Erro ao buscar usuários para bulk:", error);
+                if(usersSelect) {
+                    usersSelect.enable();
+                    usersSelect.setChoices([{value:'', label:'Erro ao carregar', disabled:true}], 'value', 'label', true);
+                }
+                window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Erro ao carregar usuários.', type: 'error' } }));
+            }
+
+        } else if (selectedAction === 'adicionar' && hasCalendars) {
+            console.log("[Bloco Executado]: else if (adicionar com calendários)");
+            usersWrapper.classList.remove('hidden');
+            if(usersSelect) { // Verifica se usersSelect existe
+                usersSelect.clearStore(); // Limpa para permitir digitação
+                usersSelect.enable();
+                if (usersSelect.input) { // Define placeholder novamente
+                   usersSelect.input.placeholder = usersSelect.config.placeholderValue || 'Emails (Enter, Vírgula, Colar)...';
+                }
+            }
+
+        } else {
+            console.log("[Bloco Executado]: else (ocultar campo de usuários)");
+            usersWrapper.classList.add('hidden');
+            if(usersSelect) { usersSelect.clearStore(); } // Limpa se ocultar
+        }
+
+        // Controle do Role Wrapper
+        const showRole = selectedAction === 'editar';
+        roleWrapper.classList.toggle('hidden', !showRole);
+        console.log("Visibilidade Role Wrapper. Hidden:", !showRole);
+        console.groupEnd(); // Fecha o grupo de logs
+    }
+
+    // --- Adicionar Listeners de Change (após tudo estar inicializado) ---
+    if (calsSelect && actionSelect) {
+        calsSelectElement.addEventListener('change', updateBulkUsers);
+        actionSelectElement.addEventListener('change', updateBulkUsers);
+        console.log("Listeners de 'change' adicionados aos selects bulk.");
+        // Chamada inicial para definir o estado ao abrir (opcional, mas útil)
+        // Usar requestAnimationFrame garante que o navegador processou o DOM inicial
+        requestAnimationFrame(() => {
+             console.log("Chamando updateBulkUsers inicial via requestAnimationFrame");
+             updateBulkUsers();
+        });
+    } else {
+        console.error("Não foi possível adicionar listeners de change pois calsSelect ou actionSelect não foram inicializados.");
+    }
+
+    // <<< NOVO Listener para Submit do Form de Criação Múltipla >>>
+    if (formCreateCalendars && createCalChoices) { // Verifica se ambos existem
+        formCreateCalendars.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            console.groupCollapsed("--- Formulário Criar Múltiplos Submetido ---");
+            const formElement = ev.target;
+            window.dispatchEvent(new CustomEvent('start-loading', {
+                detail: { formElement: formElement, message: 'Criando calendários...' }
+            }));
+
+            const submitButton = ev.target.querySelector('button[type="submit"]');
+            const originalButtonText = submitButton ? submitButton.textContent : 'Criar calendários';
+            if(submitButton) submitButton.disabled = true;
+            if(submitButton) submitButton.textContent = 'Criando...'; // Ou use innerHTML se tiver spinner
+
+            // Pega os valores diretamente da instância do Choices.js
+            const calendarNames = createCalChoices.getValue(true);
+            console.log("Submit - Nomes para Criar:", calendarNames);
+
+            // Validação
+            if (!calendarNames || calendarNames.length === 0) {
+                console.warn("Erro de validação: Nenhum nome de calendário fornecido.");
+                window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Adicione pelo menos um nome de calendário.', type: 'error' } }));
+                if(submitButton) submitButton.disabled = false;
+                if(submitButton) submitButton.textContent = originalButtonText;
+                console.groupEnd();
+                window.dispatchEvent(new CustomEvent('stop-loading', { detail: { formElement: formElement } }));
+                return; // Impede envio
+            }
+
+            // Preparar Payload para o NOVO endpoint de criação em massa
+            const payload = { names: calendarNames };
+            console.log("Validações OK. Enviando payload para /api/calendars/bulk_create:", payload);
+
+            // Fazer Fetch para o NOVO endpoint
+            try {
+                const response = await fetch('/api/calendars/bulk_create', { // <<< Endpoint de Criação em Massa
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json().catch(() => ({ error: `Erro ${response.status} - ${response.statusText}` }));
+
+                if (response.ok) {
+                    console.log("Criação em massa concluída (backend). Resultado:", result);
+                    const count = result.success_count || calendarNames.length; // Pega contagem do backend se disponível
+                    window.dispatchEvent(new CustomEvent('toast', { detail: { msg: `Criação de ${count} calendário(s) solicitada!`, type: 'success' } }));
+                    // Opcional: Fechar o modal (depende de como você controla, Alpine ou JS direto)
+                    // Ex: document.querySelector('[x-data="modal(\'modal-create\')"]').__x.$data.open = false; // Se precisar controlar Alpine externamente
+                    setTimeout(() => window.location.reload(), 1500); // Recarrega após sucesso
+                } else {
+                    throw new Error(result.error || `Erro ${response.status} ao criar no servidor.`);
+                }
+            } catch (error) {
+                console.error("Erro no fetch/submit do form-create-calendars:", error);
+                window.dispatchEvent(new CustomEvent('toast', { detail: { msg: `Erro: ${error.message}`, type: 'error' } }));
+                if(submitButton) submitButton.disabled = false;
+                if(submitButton) submitButton.textContent = originalButtonText;
+                window.dispatchEvent(new CustomEvent('stop-loading', { detail: { formElement: formElement } }));
+            } finally {
+                console.groupEnd();
+            }
+        });
+        console.log("Listener de 'submit' adicionado ao #form-create-calendars.");
+    } else {
+        console.warn("Elemento #form-create-calendars ou instância Choices não encontrados para adicionar listener.");
+    }
+    // --- Listener para Submit do Form Bulk ---
+    if (formBulk) {
+        formBulk.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            console.groupCollapsed("--- Formulário Bulk Submetido ---"); // Agrupa logs do submit
+            const formElement = ev.target;
+            window.dispatchEvent(new CustomEvent('start-loading', {
+                detail: { formElement: formElement, message: 'Alterando dados em massa..' }
+            }));
+
+            const submitButton = ev.target.querySelector('button[type="submit"]');
+            const originalButtonText = submitButton ? submitButton.textContent : 'Executar';
+            if(submitButton) submitButton.disabled = true;
+            if(submitButton) submitButton.textContent = 'Executando...';
+
+
+            // Leitura dos valores NO MOMENTO DO SUBMIT
+            const selectedCalendarIds = calsSelect ? calsSelect.getValue(true) : [];
+            const selectedAction = document.getElementById('bulk-action').value;
+            const selectedUsers = usersSelect ? usersSelect.getValue(true) : []; // Pega os CHIPS
+            const selectedRole = document.getElementById('bulk-role').value;
+
+            console.log("Submit - Calendários:", selectedCalendarIds);
+            console.log("Submit - Ação:", selectedAction);
+            console.log("Submit - Usuários (Chips):", selectedUsers);
+            console.log("Submit - Role:", selectedRole);
+
+            // Validações
+            let validationError = null;
+            if (!selectedCalendarIds || selectedCalendarIds.length === 0) {
+                validationError = 'Selecione pelo menos um calendário.';
+            } else if (!selectedAction) {
+                validationError = 'Selecione uma operação.';
+            } else if ((selectedAction === 'adicionar' || selectedAction === 'remover' || selectedAction === 'editar') && (!selectedUsers || selectedUsers.length === 0)) {
+                validationError = 'Adicione pelo menos um usuário (use Enter ou vírgula após digitar).';
+            } else if (selectedAction === 'editar' && !selectedRole) {
+                validationError = 'Selecione uma permissão para editar.';
+            }
+
+            if (validationError) {
+                console.warn("Erro de validação no submit:", validationError);
+                window.dispatchEvent(new CustomEvent('toast', { detail: { msg: validationError, type: 'error' } }));
+                if(submitButton) submitButton.disabled = false; // Reabilita botão
+                if(submitButton) submitButton.textContent = originalButtonText;
+                console.groupEnd(); // Fecha grupo de logs
+                window.dispatchEvent(new CustomEvent('stop-loading', { detail: { formElement: formElement } }));
+                return; // Impede o envio
+            }
+
+            // Preparar Payload
+            const payload = {
+                calendars: selectedCalendarIds,
+                action: selectedAction,
+                users: selectedUsers, // Envia apenas os emails dos chips adicionados
+                role: selectedAction === 'editar' ? selectedRole : 'writer'
+            };
+            console.log("Validações OK. Enviando payload para /acl/bulk:", payload);
+
+            // Fazer Fetch
+            try {
+                const response = await fetch('/acl/bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                // Tenta analisar JSON mesmo se não for OK, pode ter msg de erro
+                const result = await response.json().catch(() => ({ error: `Erro ${response.status} - ${response.statusText}` }));
+
+                if (response.ok) { // Usar response.ok para sucesso (status 200-299)
+                    console.log("Operação em massa concluída com sucesso (backend). Resultado:", result);
+                    window.dispatchEvent(new CustomEvent('toast', { detail: { msg: 'Operação em massa concluída!', type: 'success' } }));
+                    setTimeout(() => window.location.reload(), 1500); // Recarrega após sucesso
+                } else {
+                    // Levanta erro com a mensagem do backend ou status
+                    throw new Error(result.error || `Erro ${response.status} ao processar no servidor.`);
+                }
+            } catch (error) {
+                console.error("Erro no fetch/submit do form-bulk:", error);
+                window.dispatchEvent(new CustomEvent('toast', { detail: { msg: `Erro: ${error.message}`, type: 'error' } }));
+                if(submitButton) submitButton.disabled = false; // Reabilita
+                if(submitButton) submitButton.textContent = originalButtonText;
+                window.dispatchEvent(new CustomEvent('stop-loading', { detail: { formElement: formElement } }));
+            } finally {
+                 console.groupEnd(); // Fecha grupo de logs
+            }
+        });
+        console.log("Listener de 'submit' adicionado ao #form-bulk.");
+    } else {
+        console.warn("Elemento #form-bulk não encontrado.");
+    }
+
+}); // Fim do DOMContentLoaded
+</script>

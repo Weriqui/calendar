@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="pt-BR" class="h-full">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Google Calendar Manager</title>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+    <style>
+        /* Garante que o overlay de loading fique acima da maioria dos elementos */
+        #loading-overlay { z-index: 9998; }
+        /* Garante que o toast fique acima de TUDO (incluindo overlay e modais) */
+        #toast-container { z-index: 9999; }
+        /* Estilo básico para spinner (pode substituir por SVG ou outra animação) */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3); /* Cor de fundo do círculo */
+            border-radius: 50%;
+            border-top-color: #fff; /* Cor da parte que gira */
+            width: 40px;
+            height: 40px;
+            animation: spin 1s ease-in-out infinite; /* Animação de giro */
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body class="h-full bg-gray-50 text-gray-900" x-data="appRoot">
+    <header class="bg-white shadow" x-data="{}">
+      <div class="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
+        <h1 class="text-2xl font-semibold">Google Calendar Manager</h1>
+        <nav class="flex gap-4">
+           <button @click="console.log('Botão Criar CLICADO!'); $dispatch('open-modal', 'modal-create')" type="button" class="px-4 py-2 rounded-xl shadow hover:shadow-md bg-indigo-600 text-white">Criar calendário</button>
+           <button @click="console.log('Botão Bulk CLICADO!'); $dispatch('open-modal', 'modal-bulk')" type="button" class="px-4 py-2 rounded-xl shadow hover:shadow-md bg-sky-600 text-white">Ações em Massa</button>
+           </nav>
+      </div>
+    </header>
+
+    <main class="mx-auto max-w-7xl p-6">
+      {% block content %}{% endblock %}
+    </main>
+
+    {% include "modals.html" %}
+
+    <div id="toast-container" x-data="{ shown: false, message:'', type:'success' }" x-show="shown" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 transform scale-90" x-transition:enter-end="opacity-100 transform scale-100" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100 transform scale-100" x-transition:leave-end="opacity-0 transform scale-90" x-on:toast.window="message=$event.detail.msg; type=$event.detail.type || 'info'; shown=true; setTimeout(()=>shown=false,4000)" :class="{ 'bg-red-600': type === 'error', 'bg-green-600': type === 'success', 'bg-blue-500': type === 'info', 'bg-yellow-500': type === 'warning' }" class="fixed top-5 left-1/2 -translate-x-1/2 max-w-md w-auto min-w-[250px] text-white px-5 py-3 rounded-lg shadow-lg text-center text-sm font-medium" style="display: none;">
+        <span x-text="message"></span>
+    </div>
+
+    <div id="loading-overlay" x-show="$store.appState.loading" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0" class="fixed inset-0 bg-gray-800/75 backdrop-blur-sm flex items-center justify-center" style="display: none;" aria-live="assertive" aria-atomic="true" role="alertdialog" aria-labelledby="loading-message">
+        <div class="flex flex-col items-center space-y-4 p-6 bg-gray-900/80 rounded-xl shadow-xl"> <div class="spinner"></div>
+            <span id="loading-message" class="text-white text-lg font-medium" x-text="$store.appState.loadingMessage || 'Processando...'">Processando...</span>
+        </div>
+    </div>
+</body>
+<script>
+    document.addEventListener('alpine:init', () => {
+        console.log("Alpine init: Definindo store e componentes...");
+
+        // --- Estado Global Alpine ---
+        Alpine.store('appState', {
+            loading: false,
+            loadingMessage: 'Processando...', // Mensagem padrão
+            // Pode adicionar outros estados globais aqui se precisar
+        });
+
+        Alpine.data('appRoot', () => ({
+			init() {
+				console.log('appRoot Alpine component initialized.');
+				window.addEventListener('start-loading', (event) => {
+					console.log("Event 'start-loading' received by appRoot", event.detail);
+					const { formElement, message } = event.detail || {};
+					this.startLoading(formElement, message); // Chama o método abaixo
+				});
+				window.addEventListener('stop-loading', (event) => {
+					console.log("Event 'stop-loading' received by appRoot", event.detail);
+					const { formElement } = event.detail || {};
+					this.stopLoading(formElement); // Chama o método abaixo
+				});
+			},
+			// Métodos para controlar o loading DENTRO do Alpine
+			startLoading(formElement = null, message = 'Processando...') {
+				console.log("Alpine startLoading:", message);
+				Alpine.store('appState').loadingMessage = message;
+				Alpine.store('appState').loading = true; // Modifica o store DENTRO do Alpine
+
+				if (formElement) { /* ... desabilitar elementos ... */ }
+				document.querySelectorAll('header button').forEach(btn => btn.disabled = true);
+			},
+			stopLoading(formElement = null) {
+				console.log("Alpine stopLoading");
+				if (formElement) { /* ... habilitar elementos ... */ }
+				document.querySelectorAll('header button').forEach(btn => btn.disabled = false);
+				// O delay pode não ser mais necessário aqui, pois a mudança é reativa
+				Alpine.store('appState').loading = false;
+			}
+		}));
+
+
+        // --- Definição do Componente Modal Genérico ---
+        // (Este controla o 	abrir/fechar baseado em eventos)
+        Alpine.data('modal', id => ({
+            open: false,
+            init() {
+                // Ouve pelo evento global para abrir este modal específico
+                const openHandler = (e) => {
+                    if (e.detail === id) {
+                        console.log(`Abrindo modal: ${id}`);
+                        this.open = true;
+                        // Opcional: Trazer foco para o primeiro input do modal ao abrir
+                        this.$nextTick(() => {
+                             const firstInput = this.$el.querySelector('input, select, textarea');
+                             if (firstInput) firstInput.focus();
+                        });
+                    }
+                };
+                // Ouve pelo evento global para fechar este modal específico
+                const closeHandler = (e) => {
+                    if (e.detail === id) {
+                        console.log(`Fechando modal: ${id}`);
+                        this.open = false;
+                    }
+                };
+                // Listener para fechar com ESC
+                const escapeHandler = (e) => {
+                   if (e.key === 'Escape' && this.open) {
+                        console.log(`Fechando modal ${id} via ESC`);
+                        this.open = false;
+                   }
+                };
+
+                window.addEventListener('open-modal', openHandler);
+                window.addEventListener('close-modal', closeHandler);
+                window.addEventListener('keydown', escapeHandler);
+
+                // Cleanup: Remove listeners quando o elemento Alpine é destruído
+                // Importante se os modais forem adicionados/removidos dinamicamente
+                this.$watch('open', (isOpen) => {
+                    // Controla overflow do body para evitar scroll duplo
+                    if (isOpen) {
+                        document.body.style.overflow = 'hidden';
+                    } else {
+                        document.body.style.overflow = '';
+                    }
+                });
+
+                this.$destroy = () => {
+                    console.log(`Destroying listeners for modal ${id}`);
+                    window.removeEventListener('open-modal', openHandler);
+                    window.removeEventListener('close-modal', closeHandler);
+                    window.removeEventListener('keydown', escapeHandler);
+                    document.body.style.overflow = ''; // Garante reset do overflow
+                }
+            },
+            // Função para fechar de dentro do modal (ex: botão cancelar)
+            close() {
+                this.open = false;
+            }
+        }));
+
+        // --- Definição do Componente de Edição (editCal) ---
+        // Se você estiver usando x-data="editCal(...)" no seu index.html ou modals.html,
+        // a definição dele deve vir AQUI dentro do alpine:init.
+        // Adapte o código da função editCal que você tinha para o formato Alpine.data
+        Alpine.data('editCal', (id, currentName) => ({
+            // ... (copie/adapte a lógica interna da função editCal aqui) ...
+            // Lembre-se de chamar window.startLoading(this.$el, '...') no início do submit
+            // e window.stopLoading(this.$el) no final (catch/finally).
+            // Exemplo:
+             name: currentName,
+             users: [],
+             addUsersChoicesInstance: null, // Mantenha estado das instâncias Choices aqui
+
+             async init() {
+                 // ... lógica para buscar usuários e inicializar Choices para este modal ...
+                 // (Use this.addUsersChoicesInstance para guardar a instância)
+             },
+             destroyChoices() {
+                 // ... lógica para destruir a instância Choices deste modal ...
+                 if (this.addUsersChoicesInstance) { this.addUsersChoicesInstance.destroy(); this.addUsersChoicesInstance = null;}
+             },
+             addCustomInputListeners(choicesInstance) {
+                // ... lógica para adicionar listeners keydown/paste ...
+             },
+             async submit() {
+                  const formElement = this.$el; // O <form>
+                  window.startLoading(formElement, 'Salvando alterações...');
+                  try {
+                      // ... Lógica de submit para editar nome, adicionar/remover usuários ...
+                      // ... Chamadas fetch ...
+                      // ... Disparar toasts ...
+                      // ... Reload ou fechar modal ...
+                  } catch (error) {
+                       // ... Mostrar erro ...
+                  } finally {
+                      // Garante que o loading pare mesmo se houver erro não pego
+                      window.stopLoading(formElement);
+                  }
+             },
+             removeUser(emailToRemove) {
+                  // ... Lógica para remover usuário (também pode usar start/stop loading) ...
+             },
+             handleClose() { // Associar ao botão cancelar ou @click.outside se necessário
+                  this.$dispatch('close-modal', `modal-edit-${id}`); // Dispara evento global para fechar
+                  this.destroyChoices(); // Limpa Choices ao fechar
+             }
+        })); // Fim de Alpine.data('editCal')
+
+    }); // Fim de alpine:init
+</script>
+</html>
