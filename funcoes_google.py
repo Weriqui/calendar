@@ -12,12 +12,10 @@ from googleapiclient.discovery import build
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, wait_random_exponential, retry_if_exception
 import requests
 import random
-from dotenv import load_dotenv
 import json
 import ssl
 from functools import partial
 import logging
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -38,8 +36,8 @@ logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
 SCOPES: List[str] = ["https://www.googleapis.com/auth/calendar"]
-SERVICE_ACCOUNT_FILE = json.loads(os.getenv("SERVICE_ACCOUNT_FILE"))
-USER_TO_IMPERSONATE = os.getenv("USER_TO_IMPERSONATE")
+SERVICE_ACCOUNT_FILE = json.loads(os.environ.get("SERVICE_ACCOUNT_FILE"))
+USER_TO_IMPERSONATE = os.environ.get("USER_TO_IMPERSONATE")
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
 
 
