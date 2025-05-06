@@ -7,7 +7,7 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.oauth2 import service_account
-from googleapiclient.errors import HttpError
+from googleapiclient.errors import HttpError, BatchError
 from googleapiclient.discovery import build
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, wait_random_exponential, retry_if_exception
 import requests
@@ -729,7 +729,9 @@ def _execute_batch_with_retry(batch_request, errors_list, phase_name):
         raise e # Re-levanta
     
 
-def _execute_operations_with_item_retry(operations: list[dict], action_name:str, max_retries: int, servico=servico) -> tuple[dict, dict]:
+ITEMS_PER_SUB_BATCH = 500  
+
+def _execute_operations_with_item_retry(operations: list[dict], action_name:str, max_retries: int,success_formatter: callable = None, servico=servico) -> tuple[dict, dict]:
     """
     Executa uma lista de operações da API em lote, com retentativas para itens
     individuais que falham com erros retentáveis (ex: rate limit).
@@ -746,134 +748,182 @@ def _execute_operations_with_item_retry(operations: list[dict], action_name:str,
         - dict: Dicionário de resultados bem-sucedidos {op_key: message}.
         - dict: Dicionário de erros finais {request_id_string: error_message}.
     """
-    pending_ops = list(operations) # Cria cópia da lista de operações pendentes
-    successful_results = {} # {op_key: message}
-    final_item_errors = {} # {request_id: error_message}
-    current_attempt = 0
+    pending_ops_map = {op['op_key']: op for op in operations} # Mapeia op_key para dados da operação
+    
+    # Dicionário final de resultados processados
+    # {op_key: {'status': 'success', 'response_data': ...} ou {'status': 'failed_final', 'error': ...}}
+    processed_results = {}
+    
+    # Dicionário final de erros que não puderam ser resolvidos ou erros de preparação de item
+    # {request_id: error_message_string}
+    final_item_errors = {}
+    
+    current_overall_attempt = 0 # Contador para o loop de retentativas de itens
 
-    while current_attempt <= max_retries and pending_ops:
-        current_attempt += 1
-        logger.info(f"Item Retry Attempt {current_attempt}/{max_retries+1} for {len(pending_ops)} pending operations ({action_name}).")
-
-        current_batch_errors = [] # Erros do batch.execute() desta tentativa
-        attempt_results = {} # Resultados individuais desta tentativa {op_key: {'status':..., 'message':..., 'exception':...}}
-
-        # Callback específico para esta tentativa
-        def attempt_callback(request_id, response, exception):
-             try:
-                 # Encontra a operação original pelo request_id para obter o op_key
-                 op_data = next((op for op in pending_ops if op["request_id"] == request_id), None)
-                 if not op_data:
-                      logger.error(f"Internal Error: Could not find operation data for request_id '{request_id}' in callback.")
-                      # Registra erro, mas não temos op_key para attempt_results
-                      final_item_errors[request_id] = "Internal error finding operation data in callback."
-                      return
-                 op_key = op_data["op_key"]
-             except Exception as e:
-                 logger.error(f"Internal Error: Processing request_id '{request_id}' in callback: {e}")
-                 final_item_errors[request_id] = f"Internal error processing callback: {e}"
-                 return
-
-             if exception:
-                 error_message = str(exception)
-                 status_code = getattr(exception, 'resp', {}).get('status', 'N/A')
-                 logger.warning(f"Attempt {current_attempt}: Item Error {op_key} (Status: {status_code}): {error_message}")
-                 if _is_retryable_error(exception) and current_attempt <= max_retries:
-                     attempt_results[op_key] = {'status': 'failed_retryable', 'message': error_message, 'exception': exception}
-                 else:
-                     attempt_results[op_key] = {'status': 'failed_final', 'message': error_message, 'exception': exception}
-             else:
-                 logger.debug(f"Attempt {current_attempt}: Item Success {op_key}")
-                 # Define a mensagem de sucesso baseada na ação (poderia ser mais genérico)
-                 if action_name == 'adicionar': msg = f"Acesso adicionado: {response.get('role', 'N/A')}"
-                 elif action_name == 'editar': msg = f"Acesso atualizado para: {response.get('role', 'N/A')}"
-                 elif action_name == 'remover': msg = "Acesso removido com sucesso."
-                 else: msg = "Operação concluída."
-                 attempt_results[op_key] = {'status': 'success', 'message': msg, 'exception': None}
-
-        # Cria e popula o batch para esta tentativa
-        batch = servico.new_batch_http_request(callback=attempt_callback)
-        items_in_this_batch = 0
-        for op_data in pending_ops:
-            try:
-                # Adiciona a chamada da API pré-configurada (partial)
-                batch.add(op_data["api_call_func"](), request_id=op_data["request_id"])
-                items_in_this_batch += 1
-            except Exception as add_err:
-                # Erro ao tentar adicionar ao batch (ex: erro na função partial?)
-                logger.error(f"Error adding operation {op_data['request_id']} to batch: {add_err}")
-                final_item_errors[op_data["request_id"]] = f"Error adding to batch: {add_err}"
-                # Marca como falha final para não tentar de novo
-                attempt_results[op_data["op_key"]] = {'status':'failed_final', 'message':f"Error adding to batch: {add_err}", 'exception': add_err}
+    # Lista de chaves de operações (op_key) que ainda precisam ser processadas
+    # Inicialmente, todas as chaves das operações fornecidas
+    keys_to_process_in_this_retry_loop = list(pending_ops_map.keys())
 
 
-        if items_in_this_batch == 0:
-            logger.info(f"Attempt {current_attempt}: No pending operations to execute in batch.")
-            break # Sai do loop while
+    while current_overall_attempt <= max_retries and keys_to_process_in_this_retry_loop:
+        current_overall_attempt += 1
+        logger.info(
+            f"Item Retry Loop Attempt {current_overall_attempt}/{max_retries+1} for "
+            f"{len(keys_to_process_in_this_retry_loop)} pending operations ({action_name})."
+        )
 
-        # Executa o batch desta tentativa
-        try:
-            _execute_batch_with_retry(batch, current_batch_errors, f"{action_name}_item_attempt_{current_attempt}")
-        except Exception as batch_exec_error:
-             logger.error(f"Attempt {current_attempt}: CRITICAL - Batch execution failed definitively for phase {action_name}. Aborting further item retries.")
-             # Marca todos os itens *deste batch* como falha final
-             for op_data in pending_ops:
-                 if op_data["op_key"] not in attempt_results:
-                    error_msg = f"Batch execution failed: {batch_exec_error}"
-                    attempt_results[op_data["op_key"]] = {'status': 'failed_final', 'message': error_msg, 'exception': batch_exec_error}
-                    final_item_errors[op_data["request_id"]] = error_msg
-             pending_ops = [] # Limpa para sair do loop
-             break # Sai do loop while
+        # Guarda os resultados (sucesso, falha retentável, falha final) de todos os sub-lotes DESTA tentativa GERAL
+        results_from_all_sub_batches_this_attempt = {} # {op_key: {'status':..., 'message':..., 'exception':..., 'response_data':...}}
+        
+        # Lista de op_keys que falharam de forma retentável NESTA tentativa geral (para a próxima iteração do while)
+        keys_for_next_retry_loop_iteration = []
 
-        # Processa resultados e prepara próxima lista de pendentes
-        next_pending_ops = []
-        processed_keys_this_attempt = set(attempt_results.keys())
+        # Processa os 'keys_to_process_in_this_retry_loop' em chunks
+        ops_processed_in_current_attempt = 0
+        for i in range(0, len(keys_to_process_in_this_retry_loop), ITEMS_PER_SUB_BATCH):
+            chunk_op_keys = keys_to_process_in_this_retry_loop[i:i + ITEMS_PER_SUB_BATCH]
+            if not chunk_op_keys:
+                continue
 
-        for op_data in pending_ops:
-            op_key = op_data["op_key"]
-            if op_key in attempt_results:
-                result_info = attempt_results[op_key]
-                if result_info['status'] == 'success':
-                    successful_results[op_key] = result_info['message']
-                elif result_info['status'] == 'failed_final':
-                    final_item_errors[op_data["request_id"]] = result_info['message']
-                elif result_info['status'] == 'failed_retryable':
-                    next_pending_ops.append(op_data) # Adiciona para a próxima tentativa
+            current_sub_batch_operations = [pending_ops_map[op_key] for op_key in chunk_op_keys]
+            
+            logger.info(
+                f"  Attempt {current_overall_attempt}: Processing sub-batch {i//ITEMS_PER_SUB_BATCH + 1} "
+                f"with {len(current_sub_batch_operations)} items."
+            )
+
+            current_sub_batch_execution_errors = [] # Erros da execução do sub-lote em si
+
+            # Callback para este sub-lote específico
+            def sub_batch_callback(request_id, response, exception):
+                try:
+                    # Encontra a operação original pelo request_id para obter o op_key
+                    # O request_id é único para cada operação, mesmo entre sub-lotes
+                    op_data = next((op for op in operations if op["request_id"] == request_id), None)
+                    if not op_data:
+                        raise ValueError(f"Operation data not found for request_id '{request_id}'")
+                    op_key = op_data["op_key"]
+                except Exception as cb_err:
+                    logger.error(f"Internal Error processing request_id '{request_id}' in sub_batch_callback: {cb_err}")
+                    final_item_errors[request_id] = f"Internal callback error: {cb_err}"
+                    # Marca como falha final se não conseguirmos associar o resultado
+                    processed_results[request_id] = {'status':'failed_final', 'error': f"Internal callback error: {cb_err}"} # Usando request_id como fallback para op_key
+                    return
+
+                if exception:
+                    error_message = str(exception)
+                    status_code = getattr(exception, 'resp', {}).get('status', 'N/A')
+                    logger.warning(f"  Attempt {current_overall_attempt}, Sub-batch: Item Error {op_key} (Status: {status_code}): {error_message}")
+                    
+                    # Usa o status de results_from_all_sub_batches_this_attempt para decidir o que fazer
+                    if _is_retryable_error(exception) and current_overall_attempt <= max_retries:
+                        results_from_all_sub_batches_this_attempt[op_key] = {'status': 'failed_retryable', 'error': error_message, 'exception': exception}
+                    else:
+                        final_msg = f"Failed after {current_overall_attempt} attempts: {error_message}"
+                        results_from_all_sub_batches_this_attempt[op_key] = {'status': 'failed_final', 'error': final_msg, 'exception': exception}
+                        # Adiciona ao log de erros finais se falhar definitivamente aqui
+                        final_item_errors[request_id] = final_msg
+                else:
+                    logger.debug(f"  Attempt {current_overall_attempt}, Sub-batch: Item Success {op_key}")
+                    try:
+                        # Usa o formatador fornecido para estruturar o sucesso
+                        success_data = success_formatter(op_data, response) if success_formatter else {'status':'success', 'response_data': response}
+                        results_from_all_sub_batches_this_attempt[op_key] = success_data
+                    except Exception as format_err:
+                        logger.error(f"Error formatting success response for {op_key}: {format_err}", exc_info=True)
+                        err_msg = f"Success but failed to format response: {format_err}"
+                        results_from_all_sub_batches_this_attempt[op_key] = {'status': 'failed_final', 'error': err_msg, 'exception': format_err}
+                        final_item_errors[request_id] = err_msg
+            
+            # Cria e popula o sub-lote
+            sub_batch = servico.new_batch_http_request(callback=sub_batch_callback)
+            items_added_to_this_sub_batch = 0
+            for op_data in current_sub_batch_operations:
+                try:
+                    sub_batch.add(op_data["api_call_func"](), request_id=op_data["request_id"])
+                    items_added_to_this_sub_batch += 1
+                except BatchError as be: # Captura BatchError específico aqui
+                    logger.error(f"BatchError adding operation {op_data['request_id']} to sub-batch: {be}. This sub-batch will likely fail or be skipped.")
+                    final_item_errors[op_data["request_id"]] = f"Error adding to sub-batch (BatchError): {be}"
+                    processed_results[op_data["op_key"]] = {'status':'failed_final', 'error':f"Error adding to sub-batch (BatchError): {be}"}
+                    # Não continua adicionando a este sub-batch se ele já está cheio
+                    # O erro aqui é ANTES de executar, então o item já falhou.
+                except Exception as add_err:
+                    logger.error(f"Error adding operation {op_data['request_id']} to sub-batch: {add_err}")
+                    final_item_errors[op_data["request_id"]] = f"Error adding to sub-batch: {add_err}"
+                    processed_results[op_data["op_key"]] = {'status':'failed_final', 'error':f"Error adding to sub-batch: {add_err}"}
+
+            if items_added_to_this_sub_batch > 0 :
+                try:
+                    _execute_batch_with_retry(sub_batch, current_sub_batch_execution_errors, f"{action_name}_attempt_{current_overall_attempt}_sub_batch_{i//ITEMS_PER_SUB_BATCH + 1}")
+                    if current_sub_batch_execution_errors:
+                         logger.error(f"  Attempt {current_overall_attempt}: Sub-batch {i//ITEMS_PER_SUB_BATCH + 1} execution FAILED with errors: {current_sub_batch_execution_errors}")
+                         # Se o sub-batch inteiro falhou, marca todos os SEUS itens como falha retentável (ou final se for o caso)
+                         for op_data_in_failed_sub_batch in current_sub_batch_operations:
+                             op_key_failed = op_data_in_failed_sub_batch["op_key"]
+                             if op_key_failed not in results_from_all_sub_batches_this_attempt: # Se o callback não foi chamado
+                                 error_msg = f"Sub-batch execution failed: {current_sub_batch_execution_errors}"
+                                 if current_overall_attempt <= max_retries:
+                                     results_from_all_sub_batches_this_attempt[op_key_failed] = {'status': 'failed_retryable', 'error': error_msg, 'exception': None} # Simula exceção
+                                 else:
+                                     results_from_all_sub_batches_this_attempt[op_key_failed] = {'status': 'failed_final', 'error': error_msg, 'exception': None}
+                                     final_item_errors[op_data_in_failed_sub_batch["request_id"]] = error_msg
+                except Exception as batch_exec_error: # Captura erro de _execute_batch_with_retry se ele re-levantar
+                    logger.error(f"  Attempt {current_overall_attempt}: CRITICAL - Sub-batch execution failed definitively. Error: {batch_exec_error}")
+                    # Marca todos os itens DESTE SUB-LOTE como falha final
+                    for op_data_in_critically_failed_sub_batch in current_sub_batch_operations:
+                        op_key_crit_failed = op_data_in_critically_failed_sub_batch["op_key"]
+                        error_msg_crit = f"Critical sub-batch execution failure: {batch_exec_error}"
+                        results_from_all_sub_batches_this_attempt[op_key_crit_failed] = {'status': 'failed_final', 'error': error_msg_crit, 'exception': batch_exec_error}
+                        final_item_errors[op_data_in_critically_failed_sub_batch["request_id"]] = error_msg_crit
             else:
-                # Não deveria acontecer se o batch executou, mas por segurança
-                logger.error(f"Attempt {current_attempt}: Operation {op_key} has no result after batch exec. Marking final failure.")
-                final_item_errors[op_data["request_id"]] = "Internal processing error - missing result."
+                logger.info(f"  Attempt {current_overall_attempt}: No items to execute in sub-batch {i//ITEMS_PER_SUB_BATCH + 1}.")
+            
+            # Pequena pausa entre sub-lotes para ajudar com rate limits, se aplicável
+            if len(keys_to_process_in_this_retry_loop) > ITEMS_PER_SUB_BATCH and (i + ITEMS_PER_SUB_BATCH) < len(keys_to_process_in_this_retry_loop):
+                 logger.debug(f"  Pausing shortly after sub-batch {i//ITEMS_PER_SUB_BATCH + 1}...")
+                 time.sleep(0.2) # Pausa de 200ms
 
-        # Verifica se algum item no batch não foi processado pelo callback (erro interno no batch?)
-        ops_in_batch_not_processed = [op for op in pending_ops if op['op_key'] not in processed_keys_this_attempt]
-        if ops_in_batch_not_processed:
-            logger.error(f"Attempt {current_attempt}: {len(ops_in_batch_not_processed)} operations were in batch but not processed by callback!")
-            for op_data in ops_in_batch_not_processed:
-                final_item_errors[op_data["request_id"]] = "Failed: No response in batch result."
-                # Remove da lista de pendentes para não tentar de novo
-                if op_data in next_pending_ops: next_pending_ops.remove(op_data)
+        # Processa os resultados DE TODOS OS SUB-LOTES desta tentativa geral
+        for op_key in keys_to_process_in_this_retry_loop: # Itera sobre as chaves que foram tentadas
+            op_data = pending_ops_map[op_key] # Pega os dados originais da operação
+            request_id = op_data["request_id"]
 
+            if op_key in results_from_all_sub_batches_this_attempt:
+                result_info = results_from_all_sub_batches_this_attempt[op_key]
+                if result_info['status'] == 'success' or result_info['status'] == 'failed_final':
+                    processed_results[op_key] = result_info # Guarda resultado final (sucesso ou falha)
+                elif result_info['status'] == 'failed_retryable':
+                    keys_for_next_retry_loop_iteration.append(op_key) # Adiciona para a próxima tentativa GERAL
+            else:
+                # Item estava na lista para processar nesta tentativa, mas não obteve resultado de nenhum sub-lote
+                # Isso pode acontecer se o _execute_batch_with_retry falhou criticamente e não marcou todos os itens.
+                logger.error(f"Attempt {current_overall_attempt}: Operation {op_key} ({op_data['original_name'] if 'original_name' in op_data else 'N/A'}) has no result after all sub-batches. Marking final failure.")
+                processed_results[op_key] = {'status': 'failed_final', 'error':'Internal error - item missing result from sub-batches.'}
+                final_item_errors[request_id] = 'Internal error - item missing result from sub-batches.'
+        
+        keys_to_process_in_this_retry_loop = keys_for_next_retry_loop_iteration # Atualiza a lista para o próximo loop GERAL
 
-        pending_ops = next_pending_ops # Atualiza a lista para o próximo loop
-
-        # Backoff antes da próxima tentativa
-        if pending_ops and current_attempt <= max_retries:
-            wait_time = min(1 * (2 ** (current_attempt - 1)), 10) + random.uniform(0, 0.5)
-            logger.info(f"Attempt {current_attempt} finished. {len(pending_ops)} items failed retryable. Waiting {wait_time:.2f}s...")
+        # Backoff para a próxima tentativa GERAL
+        if keys_to_process_in_this_retry_loop and current_overall_attempt <= max_retries:
+            wait_time = min(1 * (2 ** (current_overall_attempt - 1)), 10) + random.uniform(0, 0.5) # Jitter
+            logger.info(f"Item Retry Loop Attempt {current_overall_attempt} finished. {len(keys_to_process_in_this_retry_loop)} items failed retryable. Waiting {wait_time:.2f}s for next overall attempt...")
             time.sleep(wait_time)
 
-    # Tratamento final para itens que excederam retentativas
-    if pending_ops:
-        logger.warning(f"Exceeded max item retries ({max_retries}). {len(pending_ops)} operations failed definitively.")
-        for op_data in pending_ops:
+    # Tratamento final para itens que excederam todas as retentativas GERAIS
+    if keys_to_process_in_this_retry_loop:
+        logger.warning(f"Exceeded max item retries ({max_retries}). {len(keys_to_process_in_this_retry_loop)} ops failed definitively.")
+        for op_key in keys_to_process_in_this_retry_loop:
+            op_data = pending_ops_map[op_key]
             request_id = op_data["request_id"]
-            op_key = op_data["op_key"]
-            last_error_msg = "Unknown retryable error"
-            # Tenta pegar a última mensagem de erro registrada
-            if op_key in attempt_results and attempt_results[op_key]['status'] == 'failed_retryable':
-                last_error_msg = attempt_results[op_key]['message']
-            final_error_msg = f"Failed after {max_retries + 1} attempts: {last_error_msg}"
+            last_error_msg = "Unknown retryable error after all attempts."
+            # Tenta pegar a última mensagem de erro registrada para este op_key
+            if op_key in results_from_all_sub_batches_this_attempt and results_from_all_sub_batches_this_attempt[op_key].get('status') == 'failed_retryable':
+                 last_error_msg = results_from_all_sub_batches_this_attempt[op_key].get('error', last_error_msg)
+            
+            final_error_msg = f"Failed after {max_retries + 1} overall attempts: {last_error_msg}"
+            processed_results[op_key] = {'status':'failed_final', 'error': final_error_msg}
             final_item_errors[request_id] = final_error_msg
 
-    logger.info(f"Item retry loop finished. Success: {len(successful_results)}, Final Failures: {len(final_item_errors)}.")
-    return successful_results, final_item_errors
+    logger.info(f"Item retry loop finished. Total processed results: {len(processed_results)}, Total final item errors: {len(final_item_errors)}.")
+    return processed_results, final_item_errors
