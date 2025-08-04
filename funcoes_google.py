@@ -768,6 +768,7 @@ def _execute_batch_with_retry(batch_request, errors_list, phase_name):
         logger.error(f"Fatal unexpected error during batch execution (Phase '{phase_name}'): {e}", exc_info=True)
         errors_list.append({f"__batch_error_{phase_name}__": f"Unexpected Error: {str(e)}"})
         raise e # Re-levanta
+<<<<<<< HEAD
 
 ITEMS_PER_SUB_BATCH = 500  
 
@@ -810,10 +811,111 @@ def _execute_operations_with_item_retry(operations: list[dict], action_name: str
         batch = servico.new_batch_http_request(callback=attempt_callback)
         for op_data in pending_ops:
             batch.add(op_data["api_call_func"](), request_id=op_data["request_id"])
+=======
+    
+MAX_OPS_PER_PHYSICAL_BATCH = 480
+def _execute_operations_with_item_retry(operations: list[dict], action_name:str, max_retries: int, servico=servico) -> tuple[dict, dict]:
+    """
+    Executa uma lista de operações da API em lote, com retentativas para itens
+    individuais que falham com erros retentáveis (ex: rate limit).
+
+    Parâmetros:
+        operations: Lista de dicionários, cada um descrevendo uma operação:
+                    {'request_id': str, 'op_key': tuple, 'api_call_func': partial}
+        servico: Instância do serviço Google Calendar.
+        action_name: Nome da ação principal (para logs).
+        max_retries: Número máximo de retentativas para itens individuais.
+
+    Retorna:
+        Uma tupla contendo:
+        - dict: Dicionário de resultados bem-sucedidos {op_key: message}.
+        - dict: Dicionário de erros finais {request_id_string: error_message}.
+    """
+        op_details_map = {op['op_key']: op for op in operations}
+
+    # Dicionário para guardar resultados finais bem-sucedidos {op_key: message_string}
+    successful_results = {}
+    # Dicionário para guardar erros finais de itens {request_id_string: error_message_string}
+    final_item_errors = {}
+
+    # Lista de op_keys que ainda precisam ser processados ou retentados
+    pending_op_keys = [op['op_key'] for op in operations]
+    current_overall_attempt = 0
+
+    while current_overall_attempt <= max_retries and pending_op_keys:
+        current_overall_attempt += 1
+        logger.info(
+            f"Overall Item Retry Attempt {current_overall_attempt}/{max_retries + 1} for "
+            f"{len(pending_op_keys)} pending operations ({action_name})."
+        )
+
+        # Resultados coletados de todos os physical batches DENTRO desta tentativa geral
+        # {op_key: {'status': 'success'/'failed_retryable'/'failed_final', 'message': ..., 'exception': ...}}
+        results_from_this_overall_attempt = {}
+
+        # Itera sobre os pending_op_keys em chunks
+        num_chunks = (len(pending_op_keys) + MAX_OPS_PER_PHYSICAL_BATCH - 1) // MAX_OPS_PER_PHYSICAL_BATCH
+        
+        for chunk_index in range(num_chunks):
+            start_idx = chunk_index * MAX_OPS_PER_PHYSICAL_BATCH
+            end_idx = start_idx + MAX_OPS_PER_PHYSICAL_BATCH
+            current_chunk_op_keys = pending_op_keys[start_idx:end_idx]
+
+            if not current_chunk_op_keys:
+                continue
+
+            logger.info(
+                f"  Attempt {current_overall_attempt}: Processing Physical Batch {chunk_index + 1}/{num_chunks} "
+                f"with {len(current_chunk_op_keys)} items."
+            )
+
+            errors_for_this_physical_batch_execution = [] # Erros da execução do physical_batch em si
+
+            # Callback para este physical_batch
+            def physical_batch_callback(request_id_cb, response_cb, exception_cb):
+                try:
+                    # Encontra o op_key original a partir do request_id
+                    # Assumindo que op_details_map[op_key]['request_id'] == request_id_cb
+                    op_key_cb = None
+                    original_op_data_cb = None
+                    for key, op_data_item in op_details_map.items():
+                        if op_data_item['request_id'] == request_id_cb:
+                            op_key_cb = key
+                            original_op_data_cb = op_data_item # Contém o 'op_key' original
+                            break
+                    
+                    if not op_key_cb or not original_op_data_cb:
+                        logger.error(f"Internal Error: Could not map request_id '{request_id_cb}' to op_key in callback.")
+                        final_item_errors[request_id_cb] = "Internal error: Unmappable request_id in callback."
+                        return
+                except Exception as e_cb_lookup:
+                    logger.error(f"Internal Error during callback op_key lookup for request_id '{request_id_cb}': {e_cb_lookup}", exc_info=True)
+                    final_item_errors[request_id_cb] = f"Internal callback error: {e_cb_lookup}"
+                    return
+
+                if exception_cb:
+                    error_message = str(exception_cb)
+                    status_code = getattr(exception_cb, 'resp', {}).get('status', 'N/A')
+                    logger.warning(f"  Attempt {current_overall_attempt}, PB {chunk_index + 1}: Item Error {op_key_cb} (Status: {status_code}): {error_message}")
+                    if _is_retryable_error(exception_cb) and current_overall_attempt < max_retries: # < para permitir próxima tentativa
+                        results_from_this_overall_attempt[op_key_cb] = {'status': 'failed_retryable', 'message': error_message, 'exception': exception_cb}
+                    else:
+                        final_msg = f"Failed after {current_overall_attempt} attempts: {error_message}"
+                        results_from_this_overall_attempt[op_key_cb] = {'status': 'failed_final', 'message': final_msg, 'exception': exception_cb}
+                else: # Sucesso no item do batch
+                    logger.debug(f"  Attempt {current_overall_attempt}, PB {chunk_index + 1}: Item Success {op_key_cb}")
+                    # Formata a mensagem de sucesso como na versão original da função
+                    if action_name == 'adicionar': msg = f"Acesso adicionado: {response_cb.get('role', 'N/A')}"
+                    elif action_name == 'editar': msg = f"Acesso atualizado para: {response_cb.get('role', 'N/A')}"
+                    elif action_name == 'remover': msg = "Acesso removido com sucesso."
+                    else: msg = "Operação concluída." # Para 'create_calendar' etc.
+                    results_from_this_overall_attempt[op_key_cb] = {'status': 'success', 'message': msg, 'exception': None, 'response': response_cb}
+>>>>>>> 41eaaf67a5bad3bc6913859f9c986b84a88ccb7c
 
         if not batch._requests:
             break
 
+<<<<<<< HEAD
         try:
             _execute_batch_with_retry(batch, [], f"{action_name}_item_attempt_{current_attempt}")
         except Exception as batch_exec_error:
@@ -1022,3 +1124,115 @@ def modify_acl_users_batch(calendar_ids: list[str], user_emails: list[str], acti
 
 
 
+=======
+            # Cria um NOVO objeto batch para este chunk
+            physical_batch_request = servico.new_batch_http_request(callback=physical_batch_callback)
+            items_added_to_physical_batch = 0
+
+            for op_key_in_chunk in current_chunk_op_keys:
+                op_data = op_details_map[op_key_in_chunk] # Pega os dados completos da operação
+                try:
+                    # Adiciona ao physical_batch. O contador interno do objeto BatchHttpRequest é respeitado aqui.
+                    logger.debug(f"    Adding op {op_data['request_id']} to physical_batch. Count in this physical_batch: {items_added_to_physical_batch}")
+                    physical_batch_request.add(op_data["api_call_func"](), request_id=op_data["request_id"])
+                    items_added_to_physical_batch += 1
+                except BatchError as be_add: # Erro ao adicionar (limite do objeto batch excedido)
+                    # ESTE BLOCO NÃO DEVE SER ATINGIDO SE MAX_OPS_PER_PHYSICAL_BATCH < 1000
+                    logger.error(f"CRITICAL BatchError during physical_batch.add() for {op_data['request_id']}. This should not happen with chunking. "
+                                 f"Items already in this physical batch: {items_added_to_physical_batch}. Error: {be_add}", exc_info=True)
+                    # Marca como falha final, pois o chunking falhou
+                    results_from_this_overall_attempt[op_key_in_chunk] = {'status': 'failed_final', 'message': f"Error adding to batch (chunking failed?): {be_add}", 'exception': be_add}
+                    final_item_errors[op_data["request_id"]] = f"Error adding to batch (chunking failed?): {be_add}"
+                except Exception as add_err:
+                    logger.error(f"Error adding operation {op_data['request_id']} to physical_batch: {add_err}", exc_info=True)
+                    results_from_this_overall_attempt[op_key_in_chunk] = {'status': 'failed_final', 'message': f"Error adding to batch: {add_err}", 'exception': add_err}
+                    final_item_errors[op_data["request_id"]] = f"Error adding to batch: {add_err}"
+
+
+            if items_added_to_physical_batch > 0:
+                try:
+                    _execute_batch_with_retry(
+                        physical_batch_request,
+                        errors_for_this_physical_batch_execution,
+                        f"{action_name}_overall_attempt_{current_overall_attempt}_pb_{chunk_index + 1}"
+                    )
+                    # Se _execute_batch_with_retry reportou erros GERAIS para este physical_batch
+                    if errors_for_this_physical_batch_execution:
+                        logger.error(f"  Overall Attempt {current_overall_attempt}, Physical Batch {chunk_index + 1} execution FAILED with errors: {errors_for_this_physical_batch_execution}")
+                        # Marca todos os itens deste physical batch que ainda não têm resultado como falha retentável (ou final)
+                        for op_key_in_failed_pb in current_chunk_op_keys:
+                            if op_key_in_failed_pb not in results_from_this_overall_attempt:
+                                error_msg_pb_fail = f"Physical batch execution failed: {errors_for_this_physical_batch_execution}"
+                                if current_overall_attempt < max_retries:
+                                    results_from_this_overall_attempt[op_key_in_failed_pb] = {'status': 'failed_retryable', 'message': error_msg_pb_fail, 'exception': None}
+                                else:
+                                    results_from_this_overall_attempt[op_key_in_failed_pb] = {'status': 'failed_final', 'message': error_msg_pb_fail, 'exception': None}
+                                    final_item_errors[op_details_map[op_key_in_failed_pb]["request_id"]] = error_msg_pb_fail
+
+                except Exception as batch_exec_fatal_error: # Erro fatal de _execute_batch_with_retry
+                    logger.error(f"  Overall Attempt {current_overall_attempt}, CRITICAL - Physical Batch {chunk_index + 1} failed definitively: {batch_exec_fatal_error}", exc_info=True)
+                    for op_key_in_crit_fail_pb in current_chunk_op_keys:
+                        if op_key_in_crit_fail_pb not in results_from_this_overall_attempt:
+                            err_msg_crit = f"Critical physical batch failure: {batch_exec_fatal_error}"
+                            results_from_this_overall_attempt[op_key_in_crit_fail_pb] = {'status': 'failed_final', 'message': err_msg_crit, 'exception': batch_exec_fatal_error}
+                            final_item_errors[op_details_map[op_key_in_crit_fail_pb]["request_id"]] = err_msg_crit
+            else:
+                logger.info(f"  Attempt {current_overall_attempt}: No items were added to physical batch {chunk_index + 1} for execution.")
+            
+            # Pausa curta entre a execução de physical batches para não sobrecarregar a API
+            if chunk_index < num_chunks - 1: # Se não for o último chunk desta tentativa geral
+                time.sleep(0.2) # 200ms de pausa
+
+        # --- Fim do loop de Chunks ---
+
+        # Processa os resultados de TODOS os physical batches desta tentativa geral
+        next_pending_op_keys = []
+        for op_key_to_eval in pending_op_keys: # Itera sobre as chaves que foram tentadas nesta rodada
+            if op_key_to_eval in results_from_this_overall_attempt:
+                result_info = results_from_this_overall_attempt[op_key_to_eval]
+                if result_info['status'] == 'success':
+                    successful_results[op_key_to_eval] = result_info['message'] # Guarda a string de mensagem
+                elif result_info['status'] == 'failed_final':
+                    final_item_errors[op_details_map[op_key_to_eval]["request_id"]] = result_info['message']
+                elif result_info['status'] == 'failed_retryable':
+                    next_pending_op_keys.append(op_key_to_eval) # Adiciona para a próxima tentativa GERAL
+            else:
+                # O item estava na lista para ser processado nesta tentativa, mas não tem resultado
+                # Isso pode acontecer se um erro de `batch.add` ocorreu e não foi corretamente
+                # adicionado a `results_from_this_overall_attempt`.
+                logger.error(f"Attempt {current_overall_attempt}: Operation {op_key_to_eval} has no result recorded after processing all physical batches. Marking as final failure.")
+                final_item_errors[op_details_map[op_key_to_eval]["request_id"]] = "Internal error - item result not recorded from physical batches."
+                # Não adiciona a successful_results nem a next_pending_op_keys
+
+        pending_op_keys = next_pending_op_keys # Atualiza a lista para o próximo loop GERAL
+
+        # Backoff antes da próxima tentativa GERAL
+        if pending_op_keys and current_overall_attempt < max_retries: # < para garantir que a próxima tentativa é válida
+            wait_time = min(1 * (2 ** current_overall_attempt), 10) + random.uniform(0, 1) # Jitter
+            logger.info(
+                f"Overall Item Retry Attempt {current_overall_attempt} finished. "
+                f"{len(pending_op_keys)} items failed with retryable errors. Waiting {wait_time:.2f}s for next overall attempt..."
+            )
+            time.sleep(wait_time)
+
+    # Tratamento final para itens que excederam todas as retentativas GERAIS
+    if pending_op_keys:
+        logger.warning(f"Exceeded max overall item retries ({max_retries}). {len(pending_op_keys)} operations failed definitively.")
+        for op_key_final_fail in pending_op_keys:
+            request_id_final_fail = op_details_map[op_key_final_fail]["request_id"]
+            last_error_message = "Unknown retryable error after all attempts."
+            # Tenta pegar a última mensagem de erro registrada para este op_key se existir nos resultados da última tentativa
+            if op_key_final_fail in results_from_this_overall_attempt and \
+               results_from_this_overall_attempt[op_key_final_fail].get('status') == 'failed_retryable':
+                last_error_message = results_from_this_overall_attempt[op_key_final_fail].get('message', last_error_message)
+            
+            final_error_message_str = f"Failed after {max_retries + 1} overall attempts: {last_error_message}"
+            final_item_errors[request_id_final_fail] = final_error_message_str
+            # successful_results não é atualizado aqui, pois falhou
+
+    logger.info(
+        f"Item retry and chunking loop finished. Total successful results: {len(successful_results)}, "
+        f"Total final item errors: {len(final_item_errors)}."
+    )
+    return successful_results, final_item_errors
+>>>>>>> 41eaaf67a5bad3bc6913859f9c986b84a88ccb7c

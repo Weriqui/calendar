@@ -82,3 +82,43 @@
 2025-04-16 00:51:11,220 - funcoes_google - INFO - Returned from _execute_operations_with_item_retry.
 2025-04-16 00:51:11,220 - funcoes_google - INFO - Processing results from batch execution...
 2025-04-16 00:51:11,220 - funcoes_google - INFO - Finished batch calendar creation process.
+2025-08-04 18:27:58,362 - funcoes_google - INFO - Starting batch processing for 1 calendars.
+2025-08-04 18:27:58,362 - funcoes_google - INFO - Building batch request...
+2025-08-04 18:27:58,364 - funcoes_google - INFO - Executing batch request for 1 calendars...
+2025-08-04 18:27:58,716 - funcoes_google - INFO - Batch execution finished in 0.35 seconds.
+2025-08-04 18:27:58,716 - funcoes_google - INFO - Batch processing complete in 0.35 seconds. Found 18 unique users.
+2025-08-04 18:28:29,570 - funcoes_google - INFO - Starting batch processing for 1 calendars.
+2025-08-04 18:28:29,571 - funcoes_google - INFO - Building batch request...
+2025-08-04 18:28:29,572 - funcoes_google - INFO - Executing batch request for 1 calendars...
+2025-08-04 18:28:29,915 - funcoes_google - INFO - Batch execution finished in 0.34 seconds.
+2025-08-04 18:28:29,915 - funcoes_google - INFO - Batch processing complete in 0.34 seconds. Found 18 unique users.
+2025-08-04 18:29:02,589 - funcoes_google - INFO - Input validado. Processando 'adicionar' para 1 usuários em 1 calendários.
+2025-08-04 18:29:02,589 - funcoes_google - INFO - Input validated. Processing adicionar for 1 users on 1 calendars.
+2025-08-04 18:29:02,942 - funcoes_google - INFO - Batch execution for phase 'get_all_acls' SUCCESSFUL in 0.35 seconds.
+2025-08-04 18:29:02,945 - funcoes_google - INFO - Executing batch with 1 operations for calendar c_89d8bf5b4c1f9d49709936345e7f5329d79b8e8248e6ba74df46ee0708388c21@group.calendar.google.com.
+2025-08-04 18:29:02,945 - funcoes_google - INFO - Item Retry Attempt 1/11 for 1 pending operations (adicionar-c_89d8bf5b4c1f9d49709936345e7f5329d79b8e8248e6ba74df46ee0708388c21@group.calendar.google.com).
+2025-08-04 18:29:04,595 - funcoes_google - INFO - Batch execution for phase 'adicionar-c_89d8bf5b4c1f9d49709936345e7f5329d79b8e8248e6ba74df46ee0708388c21@group.calendar.google.com_item_attempt_1' SUCCESSFUL in 1.65 seconds.
+2025-08-04 18:29:04,595 - funcoes_google - INFO - Item retry loop finished. Success: 1, Final Failures: 0.
+2025-08-04 18:29:04,595 - funcoes_google - INFO - CACHE INVALIDATED for calendar c_89d8bf5b4c1f9d49709936345e7f5329d79b8e8248e6ba74df46ee0708388c21@group.calendar.google.com due to successful modification.
+2025-08-04 18:29:04,595 - funcoes_google - INFO - Batch modification process finished.
+2025-08-04 18:30:12,018 - funcoes_google - INFO - Starting batch processing for 2 calendars.
+2025-08-04 18:30:12,018 - funcoes_google - INFO - Building batch request...
+2025-08-04 18:30:12,020 - funcoes_google - INFO - Executing batch request for 2 calendars...
+2025-08-04 18:30:12,376 - funcoes_google - INFO - Batch execution finished in 0.36 seconds.
+2025-08-04 18:30:12,376 - funcoes_google - INFO - Batch processing complete in 0.36 seconds. Found 7 unique users.
+2025-08-04 18:31:07,674 - funcoes_google - INFO - Starting batch processing for 3 calendars.
+2025-08-04 18:31:07,674 - funcoes_google - INFO - Building batch request...
+2025-08-04 18:31:07,677 - funcoes_google - INFO - Executing batch request for 3 calendars...
+2025-08-04 18:31:08,029 - funcoes_google - INFO - Batch execution finished in 0.35 seconds.
+2025-08-04 18:31:08,030 - funcoes_google - INFO - Batch processing complete in 0.36 seconds. Found 20 unique users.
+2025-08-04 18:31:20,933 - funcoes_google - INFO - Input validado. Processando 'remover' para 1 usuários em 3 calendários.
+2025-08-04 18:31:20,934 - funcoes_google - INFO - Input validated. Processing remover for 1 users on 3 calendars.
+2025-08-04 18:31:21,308 - funcoes_google - INFO - Batch execution for phase 'get_all_acls' SUCCESSFUL in 0.37 seconds.
+2025-08-04 18:31:21,308 - funcoes_google - INFO - Skipping 'remover' for weriquetiao@gmail.com on c_7a34fa778e9ddaed9e057b98809aec1387e98f15143aa283f41bfefb7a663d39@group.calendar.google.com: Operation is not necessary.
+2025-08-04 18:31:21,309 - funcoes_google - INFO - Skipping 'remover' for weriquetiao@gmail.com on centraldevendas@villeladigital.com.br: Operation is not necessary.
+2025-08-04 18:31:21,310 - funcoes_google - INFO - Executing batch with 1 operations for calendar c_89d8bf5b4c1f9d49709936345e7f5329d79b8e8248e6ba74df46ee0708388c21@group.calendar.google.com.
+2025-08-04 18:31:21,310 - funcoes_google - INFO - Item Retry Attempt 1/11 for 1 pending operations (remover-c_89d8bf5b4c1f9d49709936345e7f5329d79b8e8248e6ba74df46ee0708388c21@group.calendar.google.com).
+2025-08-04 18:31:22,851 - funcoes_google - INFO - Batch execution for phase 'remover-c_89d8bf5b4c1f9d49709936345e7f5329d79b8e8248e6ba74df46ee0708388c21@group.calendar.google.com_item_attempt_1' SUCCESSFUL in 1.54 seconds.
+2025-08-04 18:31:22,852 - funcoes_google - INFO - Item retry loop finished. Success: 1, Final Failures: 0.
+2025-08-04 18:31:22,852 - funcoes_google - INFO - CACHE INVALIDATED for calendar c_89d8bf5b4c1f9d49709936345e7f5329d79b8e8248e6ba74df46ee0708388c21@group.calendar.google.com due to successful modification.
+2025-08-04 18:31:22,852 - funcoes_google - INFO - Batch modification process finished.
