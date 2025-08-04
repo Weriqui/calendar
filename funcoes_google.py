@@ -1,7 +1,6 @@
 from __future__ import print_function
 import time
 import os
-from typing import List, Optional
 from googleapiclient.http import BatchHttpRequest
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
@@ -16,6 +15,13 @@ import json
 import ssl
 from functools import partial
 import logging
+from dotenv import load_dotenv
+from googleapiclient.http import BatchHttpRequest
+from datetime import datetime, timedelta
+import re
+
+# Carrega as variáveis do arquivo .env
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -35,12 +41,38 @@ console_handler.setFormatter(formatter)
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 
-SCOPES: List[str] = ["https://www.googleapis.com/auth/calendar"]
-SERVICE_ACCOUNT_FILE = json.loads(os.environ.get("SERVICE_ACCOUNT_FILE"))
-USER_TO_IMPERSONATE = os.environ.get("USER_TO_IMPERSONATE")
+SCOPES: list[str] = ["https://www.googleapis.com/auth/calendar"]
+SERVICE_ACCOUNT_FILE = json.loads(os.getenv("SERVICE_ACCOUNT_FILE"))
+USER_TO_IMPERSONATE = os.getenv("USER_TO_IMPERSONATE")
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
 
-
+USER_EMAILS_FOR_QUOTA = [
+    "aline.oliveira@villeladigital.com.br",
+    "bibiana.tacques@villeladigital.com.br",
+    "bruno.bertoni@villeladigital.com.br",
+    "c1@villeladigital.com.br",
+    "carolina.gomes@villeladigital.com.br",
+    "centraldevendasoperacional@villeladigital.com.br",
+    "centraldevendas@villeladigital.com.br",
+    "eduarda.roxo@villeladigital.com.br",
+    "frederico.engel@villeladigital.com.br",
+    "gabriella.battisti@villeladigital.com.br",
+    "guilherme.borba@villeladigital.com.br",
+    "isaque.pereira@villeladigital.com.br",
+    "joao.neto@villeladigital.com.br",
+    "lisiane.dias@villeladigital.com.br",
+    "marina.bruschi@villeladigital.com.br",
+    "mateus.rodrigues@villeladigital.com.br",
+    "matheus.martins@villeladigital.com.br",
+    "pipedrive@villeladigital.com.br",
+    "renegocie@villeladigital.com.br",
+    "roberta.berti@villeladigital.com.br",
+    "romulo.lima@villeladigital.com.br",
+    "vboffice@villeladigital.com.br",
+    "victor.bonette@villeladigital.com.br",
+    "suporte@villeladigital.com.br",
+    "vinicius.ferlauto@villeladigital.com.br"
+]
 
 credentials = service_account.Credentials.from_service_account_info(
     SERVICE_ACCOUNT_FILE,
@@ -48,7 +80,15 @@ credentials = service_account.Credentials.from_service_account_info(
     subject=USER_TO_IMPERSONATE
 )
 
+
 servico = build('calendar', 'v3', credentials=credentials)
+
+# --- Constantes ---
+REQUEST_ID_SEPARATOR = '||'
+MAX_ITEM_RETRIES = 10
+ITEMS_PER_SUB_BATCH = 500 # Limite seguro de operações por batch
+ACL_CACHE = {}
+CACHE_LIFETIME_SECONDS = 300
 
 
 def criar_calendario(nome: str,servico: service_account = servico,time_zone: str = "America/Sao_Paulo") -> str:
@@ -69,7 +109,7 @@ def create_calendars_batch(names_list: list[str], time_zone: str = DEFAULT_TIMEZ
           dos calendários criados.
 
     Parâmetros:
-        names_list: Lista com os nomes (summary) dos calendários.
+        names_list: lista com os nomes (summary) dos calendários.
         servico: Instância autenticada do serviço Google Calendar API v3.
         time_zone: Fuso horário para os novos calendários.
 
@@ -199,22 +239,11 @@ def renomear_calendario(calendar_id: str,novo_nome: str,servico=servico) -> None
     print(f'Calendário {calendar_id} renomeado para “{novo_nome}”.')
 
 
-def calendarios(servico=servico):
-    """
-    Retorna a lista de calendários disponíveis na conta.
-    """
-    try:
-        nao = ["pipedrive@villeladigital.com.br","Feriados no Brasil"]
-        calendars = servico.calendarList().list().execute()
-        calendarios_para_retornar = [i for i in calendars["items"] if not i["summary"] in nao]
-        return calendarios_para_retornar
-    except HttpError as error:
-        print(f"Erro ao listar calendários: {error}")
-        return []
+
 
 def listar_usuarios_calendario(calendar_id, servico=servico):
     """
-    Lista todos os usuários com acesso a um calendário específico e seus níveis de acesso.
+    lista todos os usuários com acesso a um calendário específico e seus níveis de acesso.
 
     Parâmetros:
     - calendar_id: ID do calendário a ser verificado.
@@ -250,7 +279,7 @@ def listar_usuarios_calendario(calendar_id, servico=servico):
 
 def listar_calendarios_usuario(user_email, servico=servico):
     """
-    Lista todos os calendários aos quais um usuário possui acesso, incluindo o nível de acesso em cada um.
+    lista todos os calendários aos quais um usuário possui acesso, incluindo o nível de acesso em cada um.
 
     Parâmetros:
     - user_email: E-mail do usuário a ser verificado.
@@ -290,8 +319,8 @@ def modificar_acesso_usuarios(calendario_ids, user_emails, acao, role='writer', 
     Adiciona, remove ou edita os níveis de acesso de um ou mais usuários em um ou mais calendários.
 
     Parâmetros:
-    - calendario_ids: Lista com os IDs dos calendários a serem modificados.
-    - user_emails: Lista com os e-mails dos usuários a serem modificados.
+    - calendario_ids: lista com os IDs dos calendários a serem modificados.
+    - user_emails: lista com os e-mails dos usuários a serem modificados.
     - acao: Ação a ser realizada: 'adicionar', 'remover' ou 'editar'.
     - role: Nível de acesso (ex: 'owner', 'writer', 'reader'). Necessário para 'adicionar' ou 'editar'.
     - servico: Instância do serviço do Google Calendar.
@@ -409,12 +438,12 @@ def get_acl_users_batch(calendar_ids: list, servico=servico) -> tuple[list, dict
     Busca as ACLs de múltiplos calendários usando Batch Request.
 
     Parâmetros:
-        calendar_ids: Lista de IDs dos calendários.
+        calendar_ids: lista de IDs dos calendários.
         servico: Instância autenticada do serviço Google Calendar API v3.
 
     Retorna:
         Uma tupla contendo:
-        - list: Lista de dicionários de usuários únicos no formato [{"value": email, "label": email}].
+        - list: lista de dicionários de usuários únicos no formato [{"value": email, "label": email}].
         - dict: Dicionário de erros ocorridos {calendar_id: error_message}.
     """
     if not calendar_ids:
@@ -533,8 +562,8 @@ def modify_acl_users_batch(calendar_ids: list, user_emails: list, action: str, r
     Adiciona, remove ou edita ACLs para múltiplos usuários em múltiplos calendários usando Batch Requests.
 
     Parâmetros:
-        calendar_ids: Lista de IDs dos calendários.
-        user_emails: Lista de e-mails dos usuários.
+        calendar_ids: lista de IDs dos calendários.
+        user_emails: lista de e-mails dos usuários.
         action: Ação ('adicionar', 'remover', 'editar').
         role: Nível de acesso ('owner', 'writer', 'reader', etc.). Necessário para 'adicionar' e 'editar'.
         servico: Instância autenticada do serviço Google Calendar API v3.
@@ -544,6 +573,17 @@ def modify_acl_users_batch(calendar_ids: list, user_emails: list, action: str, r
         - dict: Dicionário de resultados {calendar_id: {user_email: message}}.
         - dict: Dicionário de erros gerais ou do batch {key: error_message}.
     """
+
+    email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    # Remove duplicatas e sanitiza
+    valid_user_emails = list(set([email.strip() for email in user_emails if re.match(email_regex, email.strip())]))
+    valid_calendar_ids = list(set([cal_id.strip() for cal_id in calendar_ids if '@' in cal_id]))
+
+    if not valid_user_emails or not valid_calendar_ids:
+        logger.error("Validation failed: No valid emails or calendar IDs remained after cleaning.")
+        return {}, {"input_error": "Nenhum e-mail ou ID de calendário válido fornecido após a validação."}
+    
+    logger.info(f"Input validated. Processing {len(valid_calendar_ids)} unique calendars and {len(valid_user_emails)} unique, valid users.")
     if not all([calendar_ids, user_emails, action]):
         return {}, {"input_error": "calendar_ids, user_emails e action são obrigatórios."}
     if action in ['adicionar', 'editar'] and not role:
@@ -558,7 +598,7 @@ def modify_acl_users_batch(calendar_ids: list, user_emails: list, action: str, r
     start_prep_time = time.time()
     logger.info(f"Preparing batch modification. Action: '{action}', Calendars: {len(calendar_ids)}, Users: {len(user_emails)}")
 
-    # Lista para guardar as operações a serem executadas pelo batch com retry
+    # lista para guardar as operações a serem executadas pelo batch com retry
     operations_to_execute = []
     # Dicionário para guardar resultados de operações que falham *antes* do batch (ex: rule_id não encontrado)
     initial_results = {cal_id: {} for cal_id in calendar_ids}
@@ -588,7 +628,7 @@ def modify_acl_users_batch(calendar_ids: list, user_emails: list, action: str, r
     # --- Lógica para 'editar' ou 'remover' ---
     elif action in ['editar', 'remover']:
         # ** FASE 1: Obter Rule IDs **
-        logger.info(f"Starting Phase 1 for '{action}': Listing ACLs to find rule IDs...")
+        logger.info(f"Starting Phase 1 for '{action}': listing ACLs to find rule IDs...")
         rule_map = {} # {(calendar_id, user_email): rule_id}
         list_errors = [] # Erros específicos da fase de listagem
 
@@ -600,7 +640,7 @@ def modify_acl_users_batch(calendar_ids: list, user_emails: list, action: str, r
                 status_code = getattr(exception, 'resp', {}).get('status', 'N/A')
                 logger.error(f"Phase 1 Error listing ACL for {calendar_id} (Status: {status_code}): {error_message}")
                 # Guarda o erro associado ao calendário para possível reporte
-                list_errors.append({calendar_id: f"List ACL Error (Status {status_code}): {error_message}"})
+                list_errors.append({calendar_id: f"list ACL Error (Status {status_code}): {error_message}"})
             else:
                 logger.debug(f"Phase 1 Processing list response for {calendar_id}")
                 for regra in response.get("items", []):
@@ -695,9 +735,10 @@ def modify_acl_users_batch(calendar_ids: list, user_emails: list, action: str, r
 
 # --- Funções Auxiliares ---
 
-def _is_retryable_error(exception):
-    # ...(sem mudanças)...
-    if not isinstance(exception, HttpError): return False
+def _is_retryable_error(exception: Exception) -> bool:
+    """Verifica se uma exceção é um erro retentável da API."""
+    if not isinstance(exception, HttpError):
+        return False
     return exception.resp.status in [403, 429, 500, 502, 503, 504]
 
 @retry(
@@ -727,153 +768,257 @@ def _execute_batch_with_retry(batch_request, errors_list, phase_name):
         logger.error(f"Fatal unexpected error during batch execution (Phase '{phase_name}'): {e}", exc_info=True)
         errors_list.append({f"__batch_error_{phase_name}__": f"Unexpected Error: {str(e)}"})
         raise e # Re-levanta
-    
 
-def _execute_operations_with_item_retry(operations: list[dict], action_name:str, max_retries: int, servico=servico) -> tuple[dict, dict]:
-    """
-    Executa uma lista de operações da API em lote, com retentativas para itens
-    individuais que falham com erros retentáveis (ex: rate limit).
+ITEMS_PER_SUB_BATCH = 500  
 
-    Parâmetros:
-        operations: Lista de dicionários, cada um descrevendo uma operação:
-                    {'request_id': str, 'op_key': tuple, 'api_call_func': partial}
-        servico: Instância do serviço Google Calendar.
-        action_name: Nome da ação principal (para logs).
-        max_retries: Número máximo de retentativas para itens individuais.
-
-    Retorna:
-        Uma tupla contendo:
-        - dict: Dicionário de resultados bem-sucedidos {op_key: message}.
-        - dict: Dicionário de erros finais {request_id_string: error_message}.
-    """
-    pending_ops = list(operations) # Cria cópia da lista de operações pendentes
-    successful_results = {} # {op_key: message}
-    final_item_errors = {} # {request_id: error_message}
+def _execute_operations_with_item_retry(operations: list[dict], action_name: str, max_retries: int, servico=servico) -> tuple[dict, dict]:
+    """Executa operações em lote com retentativas para itens individuais."""
+    pending_ops = list(operations)
+    successful_results = {}
+    final_item_errors = {}
     current_attempt = 0
 
     while current_attempt <= max_retries and pending_ops:
         current_attempt += 1
-        logger.info(f"Item Retry Attempt {current_attempt}/{max_retries+1} for {len(pending_ops)} pending operations ({action_name}).")
+        logger.info(f"Item Retry Attempt {current_attempt}/{max_retries + 1} for {len(pending_ops)} pending operations ({action_name}).")
 
-        current_batch_errors = [] # Erros do batch.execute() desta tentativa
-        attempt_results = {} # Resultados individuais desta tentativa {op_key: {'status':..., 'message':..., 'exception':...}}
+        attempt_results = {}
 
-        # Callback específico para esta tentativa
         def attempt_callback(request_id, response, exception):
-             try:
-                 # Encontra a operação original pelo request_id para obter o op_key
-                 op_data = next((op for op in pending_ops if op["request_id"] == request_id), None)
-                 if not op_data:
-                      logger.error(f"Internal Error: Could not find operation data for request_id '{request_id}' in callback.")
-                      # Registra erro, mas não temos op_key para attempt_results
-                      final_item_errors[request_id] = "Internal error finding operation data in callback."
-                      return
-                 op_key = op_data["op_key"]
-             except Exception as e:
-                 logger.error(f"Internal Error: Processing request_id '{request_id}' in callback: {e}")
-                 final_item_errors[request_id] = f"Internal error processing callback: {e}"
-                 return
+            op_data = next((op for op in pending_ops if op["request_id"] == request_id), None)
+            if not op_data:
+                logger.error(f"Internal Error: Could not find op data for request_id '{request_id}'.")
+                final_item_errors[request_id] = "Internal error: op data not found."
+                return
+            
+            op_key = op_data["op_key"]
+            if exception:
+                error_message = str(exception)
+                status_code = getattr(exception, 'resp', {}).get('status', 'N/A')
+                logger.warning(f"Attempt {current_attempt}: Item Error {op_key} (Status: {status_code}): {error_message}")
+                if _is_retryable_error(exception) and current_attempt <= max_retries:
+                    attempt_results[op_key] = {'status': 'failed_retryable', 'message': error_message}
+                else:
+                    attempt_results[op_key] = {'status': 'failed_final', 'message': error_message}
+            else:
+                if action_name == 'adicionar': msg = f"Acesso adicionado: {response.get('role', 'N/A')}"
+                elif action_name == 'editar': msg = f"Acesso atualizado para: {response.get('role', 'N/A')}"
+                elif action_name == 'remover': msg = "Acesso removido com sucesso."
+                else: msg = "Operação concluída."
+                attempt_results[op_key] = {'status': 'success', 'message': msg}
 
-             if exception:
-                 error_message = str(exception)
-                 status_code = getattr(exception, 'resp', {}).get('status', 'N/A')
-                 logger.warning(f"Attempt {current_attempt}: Item Error {op_key} (Status: {status_code}): {error_message}")
-                 if _is_retryable_error(exception) and current_attempt <= max_retries:
-                     attempt_results[op_key] = {'status': 'failed_retryable', 'message': error_message, 'exception': exception}
-                 else:
-                     attempt_results[op_key] = {'status': 'failed_final', 'message': error_message, 'exception': exception}
-             else:
-                 logger.debug(f"Attempt {current_attempt}: Item Success {op_key}")
-                 # Define a mensagem de sucesso baseada na ação (poderia ser mais genérico)
-                 if action_name == 'adicionar': msg = f"Acesso adicionado: {response.get('role', 'N/A')}"
-                 elif action_name == 'editar': msg = f"Acesso atualizado para: {response.get('role', 'N/A')}"
-                 elif action_name == 'remover': msg = "Acesso removido com sucesso."
-                 else: msg = "Operação concluída."
-                 attempt_results[op_key] = {'status': 'success', 'message': msg, 'exception': None}
-
-        # Cria e popula o batch para esta tentativa
         batch = servico.new_batch_http_request(callback=attempt_callback)
-        items_in_this_batch = 0
         for op_data in pending_ops:
-            try:
-                # Adiciona a chamada da API pré-configurada (partial)
-                batch.add(op_data["api_call_func"](), request_id=op_data["request_id"])
-                items_in_this_batch += 1
-            except Exception as add_err:
-                # Erro ao tentar adicionar ao batch (ex: erro na função partial?)
-                logger.error(f"Error adding operation {op_data['request_id']} to batch: {add_err}")
-                final_item_errors[op_data["request_id"]] = f"Error adding to batch: {add_err}"
-                # Marca como falha final para não tentar de novo
-                attempt_results[op_data["op_key"]] = {'status':'failed_final', 'message':f"Error adding to batch: {add_err}", 'exception': add_err}
+            batch.add(op_data["api_call_func"](), request_id=op_data["request_id"])
 
+        if not batch._requests:
+            break
 
-        if items_in_this_batch == 0:
-            logger.info(f"Attempt {current_attempt}: No pending operations to execute in batch.")
-            break # Sai do loop while
-
-        # Executa o batch desta tentativa
         try:
-            _execute_batch_with_retry(batch, current_batch_errors, f"{action_name}_item_attempt_{current_attempt}")
+            _execute_batch_with_retry(batch, [], f"{action_name}_item_attempt_{current_attempt}")
         except Exception as batch_exec_error:
-             logger.error(f"Attempt {current_attempt}: CRITICAL - Batch execution failed definitively for phase {action_name}. Aborting further item retries.")
-             # Marca todos os itens *deste batch* como falha final
-             for op_data in pending_ops:
-                 if op_data["op_key"] not in attempt_results:
-                    error_msg = f"Batch execution failed: {batch_exec_error}"
-                    attempt_results[op_data["op_key"]] = {'status': 'failed_final', 'message': error_msg, 'exception': batch_exec_error}
-                    final_item_errors[op_data["request_id"]] = error_msg
-             pending_ops = [] # Limpa para sair do loop
-             break # Sai do loop while
+            logger.error(f"Attempt {current_attempt}: CRITICAL - Batch execution failed for {action_name}. Aborting retries.", exc_info=True)
+            for op_data in pending_ops:
+                if op_data["op_key"] not in attempt_results:
+                    final_item_errors[op_data["request_id"]] = f"Batch execution failed: {batch_exec_error}"
+            break
 
-        # Processa resultados e prepara próxima lista de pendentes
         next_pending_ops = []
-        processed_keys_this_attempt = set(attempt_results.keys())
-
         for op_data in pending_ops:
             op_key = op_data["op_key"]
-            if op_key in attempt_results:
-                result_info = attempt_results[op_key]
-                if result_info['status'] == 'success':
-                    successful_results[op_key] = result_info['message']
-                elif result_info['status'] == 'failed_final':
-                    final_item_errors[op_data["request_id"]] = result_info['message']
-                elif result_info['status'] == 'failed_retryable':
-                    next_pending_ops.append(op_data) # Adiciona para a próxima tentativa
-            else:
-                # Não deveria acontecer se o batch executou, mas por segurança
-                logger.error(f"Attempt {current_attempt}: Operation {op_key} has no result after batch exec. Marking final failure.")
-                final_item_errors[op_data["request_id"]] = "Internal processing error - missing result."
+            result_info = attempt_results.get(op_key)
+            if not result_info:
+                logger.error(f"Attempt {current_attempt}: Operation {op_key} has no result. Marking as failed.")
+                final_item_errors[op_data["request_id"]] = "Internal error - missing result from batch."
+                continue
 
-        # Verifica se algum item no batch não foi processado pelo callback (erro interno no batch?)
-        ops_in_batch_not_processed = [op for op in pending_ops if op['op_key'] not in processed_keys_this_attempt]
-        if ops_in_batch_not_processed:
-            logger.error(f"Attempt {current_attempt}: {len(ops_in_batch_not_processed)} operations were in batch but not processed by callback!")
-            for op_data in ops_in_batch_not_processed:
-                final_item_errors[op_data["request_id"]] = "Failed: No response in batch result."
-                # Remove da lista de pendentes para não tentar de novo
-                if op_data in next_pending_ops: next_pending_ops.remove(op_data)
+            if result_info['status'] == 'success':
+                successful_results[op_key] = result_info['message']
+            elif result_info['status'] == 'failed_final':
+                final_item_errors[op_data["request_id"]] = result_info['message']
+            elif result_info['status'] == 'failed_retryable':
+                next_pending_ops.append(op_data)
 
-
-        pending_ops = next_pending_ops # Atualiza a lista para o próximo loop
-
-        # Backoff antes da próxima tentativa
+        pending_ops = next_pending_ops
         if pending_ops and current_attempt <= max_retries:
             wait_time = min(1 * (2 ** (current_attempt - 1)), 10) + random.uniform(0, 0.5)
             logger.info(f"Attempt {current_attempt} finished. {len(pending_ops)} items failed retryable. Waiting {wait_time:.2f}s...")
             time.sleep(wait_time)
 
-    # Tratamento final para itens que excederam retentativas
     if pending_ops:
-        logger.warning(f"Exceeded max item retries ({max_retries}). {len(pending_ops)} operations failed definitively.")
+        logger.warning(f"Exceeded max retries. {len(pending_ops)} operations failed.")
         for op_data in pending_ops:
-            request_id = op_data["request_id"]
-            op_key = op_data["op_key"]
-            last_error_msg = "Unknown retryable error"
-            # Tenta pegar a última mensagem de erro registrada
-            if op_key in attempt_results and attempt_results[op_key]['status'] == 'failed_retryable':
-                last_error_msg = attempt_results[op_key]['message']
-            final_error_msg = f"Failed after {max_retries + 1} attempts: {last_error_msg}"
-            final_item_errors[request_id] = final_error_msg
+            final_item_errors[op_data["request_id"]] = f"Failed after {max_retries + 1} attempts."
 
     logger.info(f"Item retry loop finished. Success: {len(successful_results)}, Final Failures: {len(final_item_errors)}.")
     return successful_results, final_item_errors
+
+
+def _get_all_acls_for_calendars_batch(calendar_ids: list[str], servico) -> tuple[dict, list]:
+    """
+    Busca todas as ACLs para uma lista de calendários e retorna um mapa de permissões,
+    incluindo o ruleId.
+    Retorna: ({'cal_id': {'user_email': {'role': 'owner', 'ruleId': 'user-...'}}}, [erros])
+    """
+    acls_map = {cal_id: {} for cal_id in calendar_ids}
+    errors = []
+
+    # Lógica de Cache (opcional, mas recomendada)
+    ids_to_fetch = []
+    for cal_id in list(set(calendar_ids)): # Processa IDs únicos
+        if cal_id in ACL_CACHE and (datetime.now() - ACL_CACHE[cal_id]['timestamp']) < timedelta(seconds=CACHE_LIFETIME_SECONDS):
+            logger.info(f"CACHE HIT: Using cached ACLs for {cal_id}")
+            acls_map[cal_id] = ACL_CACHE[cal_id]['data']
+        else:
+            ids_to_fetch.append(cal_id)
+
+    if not ids_to_fetch:
+        return acls_map, errors
+
+    def callback(request_id, response, exception):
+        if exception:
+            # ... (tratamento de erro como no seu código)
+            errors.append({request_id: str(exception)})
+        else:
+            # CORREÇÃO: Armazena um dicionário com role e ruleId
+            user_rules = {
+                rule['scope']['value']: {'role': rule.get('role'), 'ruleId': rule.get('id')}
+                for rule in response.get("items", [])
+                if rule.get("scope", {}).get("type") == "user" and rule.get("scope", {}).get("value")
+            }
+            acls_map[request_id] = user_rules
+            ACL_CACHE[request_id] = {'data': user_rules, 'timestamp': datetime.now()}
+
+    batch = servico.new_batch_http_request(callback=callback)
+    for cal_id in ids_to_fetch:
+        quota_user_email = random.choice(USER_EMAILS_FOR_QUOTA)
+        batch.add(servico.acl().list(calendarId=cal_id, quotaUser=quota_user_email), request_id=cal_id)
+
+    try:
+        _execute_batch_with_retry(batch, errors, "get_all_acls")
+    except Exception as e:
+        logger.critical(f"CRITICAL failure fetching all ACLs: {e}", exc_info=True)
+        errors.append({"__critical__": f"Failed to fetch all ACLs: {e}"})
+
+    return acls_map, errors
+
+# --- Funções Públicas ---
+
+def calendarios(servico=servico) -> list[dict]:
+    """Retorna a lista de calendários disponíveis."""
+    try:
+        # MELHORIA: Usa quotaUser aleatório para distribuir a carga
+        quota_user_email = random.choice(USER_EMAILS_FOR_QUOTA)
+        nao = ["pipedrive@villeladigital.com.br", "Feriados no Brasil"]
+        all_calendars = servico.calendarList().list(quotaUser=quota_user_email).execute()
+        return [cal for cal in all_calendars.get("items", []) if cal.get("summary") not in nao]
+    except HttpError as error:
+        logger.error(f"Erro ao listar calendários: {error}")
+        return []
+
+
+def modify_acl_users_batch(calendar_ids: list[str], user_emails: list[str], action: str, role: str, servico=servico) -> tuple[dict, dict]:
+    """
+    Adiciona, remove ou edita ACLs em lote com validação prévia e manipulação correta de ruleId.
+    """
+    # 1. Sanitização e Validação de Entradas
+    email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    valid_user_emails = list(set([email.strip().lower() for email in user_emails if re.match(email_regex, email.strip())]))
+    valid_calendar_ids = list(set([cal_id.strip() for cal_id in calendar_ids if '@' in cal_id]))
+
+    if not valid_user_emails or not valid_calendar_ids:
+        return {}, {"input_error": "Nenhum e-mail ou ID de calendário válido fornecido após a validação."}
+    if action in ['adicionar', 'editar'] and not role:
+        return {}, {"input_error": "O parâmetro 'role' é obrigatório para 'adicionar' ou 'editar'."}
+
+    logger.info(f"Input validado. Processando '{action}' para {len(valid_user_emails)} usuários em {len(valid_calendar_ids)} calendários.")
+
+    logger.info(f"Input validated. Processing {action} for {len(valid_user_emails)} users on {len(valid_calendar_ids)} calendars.")
+
+    # 2. Coleta de Dados (Fase 1)
+    existing_acls, fetch_errors = _get_all_acls_for_calendars_batch(valid_calendar_ids, servico)
+    if fetch_errors:
+        return {}, {"precondition_failed": "Erro ao buscar permissões atuais.", "details": fetch_errors}
+
+    # 3. Lógica de Negócio e Montagem das Operações (Fase 2)
+    all_operations = []
+    final_results = {}
+    
+    for cal_id in valid_calendar_ids:
+        current_cal_acls = existing_acls.get(cal_id, {})
+        for user_email in valid_user_emails:
+            op_key = (cal_id, user_email)
+            request_id = f"{cal_id}{REQUEST_ID_SEPARATOR}{user_email}"
+            quota_user_email = random.choice(USER_EMAILS_FOR_QUOTA)
+            user_acl_info = current_cal_acls.get(user_email)
+
+            api_call_func = None
+
+            if action == 'adicionar' and not user_acl_info:
+                rule_body = {"scope": {"type": "user", "value": user_email}, "role": role}
+                api_call_func = partial(servico.acl().insert, calendarId=cal_id, body=rule_body, quotaUser=quota_user_email)
+            
+            elif action == 'remover' and user_acl_info:
+                # CORREÇÃO: Usa o ruleId real que foi buscado
+                rule_id = user_acl_info['ruleId']
+                api_call_func = partial(servico.acl().delete, calendarId=cal_id, ruleId=rule_id, quotaUser=quota_user_email)
+
+            elif action == 'editar' and user_acl_info and user_acl_info['role'] != role:
+                # CORREÇÃO: Usa o ruleId real que foi buscado
+                rule_id = user_acl_info['ruleId']
+                rule_body = {"role": role}
+                api_call_func = partial(servico.acl().update, calendarId=cal_id, ruleId=rule_id, body=rule_body, quotaUser=quota_user_email)
+
+            if api_call_func:
+                all_operations.append({"request_id": request_id, "op_key": op_key, "api_call_func": api_call_func})
+            else:
+                logger.info(f"Skipping '{action}' for {user_email} on {cal_id}: Operation is not necessary.")
+
+    # 4. Execução em Lotes (Fase 3)
+    final_errors = {}
+    if not all_operations:
+        logger.info("No operations to execute after validation.")
+        return final_results, final_errors
+    
+    ops_by_calendar = {}
+    for op in all_operations:
+        cal_id = op['op_key'][0]
+        if cal_id not in ops_by_calendar:
+            ops_by_calendar[cal_id] = []
+        ops_by_calendar[cal_id].append(op)
+
+    # MELHORIA: Divide o total de operações em sub-lotes para não exceder o limite da API
+    for cal_id, operations in ops_by_calendar.items():
+        
+        # Divide as operações para este calendário em sub-lotes, se necessário
+        for i in range(0, len(operations), ITEMS_PER_SUB_BATCH):
+            operations_for_this_calendar = operations[i:i + ITEMS_PER_SUB_BATCH]
+            if operations_for_this_calendar:
+                logger.info(f"Executing batch with {len(operations_for_this_calendar)} operations for calendar {cal_id}.")
+                batch_results, batch_errors = _execute_operations_with_item_retry(
+                    operations_for_this_calendar, f"{action}-{cal_id}", MAX_ITEM_RETRIES, servico
+                )
+
+                # Consolidar resultados e erros
+                for op_key, message in batch_results.items():
+                    res_cal_id, res_user = op_key
+                    if res_cal_id not in final_results:
+                        final_results[res_cal_id] = {}
+                    final_results[res_cal_id][res_user] = message
+                
+                final_errors.update(batch_errors)
+                if not batch_errors:
+                    if cal_id in ACL_CACHE:
+                        del ACL_CACHE[cal_id]
+                        logger.info(f"CACHE INVALIDATED for calendar {cal_id} due to successful modification.")
+            else:
+                logger.info(f"No operations to execute for calendar {cal_id}.")
+
+
+
+    logger.info("Batch modification process finished.")
+    return final_results, final_errors
+
+
+
+
