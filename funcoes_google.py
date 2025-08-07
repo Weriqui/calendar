@@ -46,6 +46,10 @@ SERVICE_ACCOUNT_FILE = json.loads(os.getenv("SERVICE_ACCOUNT_FILE"))
 USER_TO_IMPERSONATE = os.getenv("USER_TO_IMPERSONATE")
 DEFAULT_TIMEZONE = "America/Sao_Paulo"
 
+IGNORED_CALENDAR_IDS = [
+    "c_d196b13eba3e0f2b699808a7fac2c2e994f2dae751f3b418200662c45c9f381e@group.calendar.google.com"
+]
+
 USER_EMAILS_FOR_QUOTA = [
     "aline.oliveira@villeladigital.com.br",
     "bibiana.tacques@villeladigital.com.br",
@@ -911,7 +915,11 @@ def calendarios(servico=servico) -> list[dict]:
         quota_user_email = random.choice(USER_EMAILS_FOR_QUOTA)
         nao = ["pipedrive@villeladigital.com.br", "Feriados no Brasil"]
         all_calendars = servico.calendarList().list(quotaUser=quota_user_email).execute()
-        return [cal for cal in all_calendars.get("items", []) if cal.get("summary") not in nao]
+        calendarios_para_retornar = [
+            cal for cal in all_calendars.get("items", [])
+            if cal.get("summary") not in nao and cal.get("id") not in IGNORED_CALENDAR_IDS
+        ]
+        return calendarios_para_retornar
     except HttpError as error:
         logger.error(f"Erro ao listar calendários: {error}")
         return []
@@ -924,7 +932,17 @@ def modify_acl_users_batch(calendar_ids: list[str], user_emails: list[str], acti
     # 1. Sanitização e Validação de Entradas
     email_regex = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     valid_user_emails = list(set([email.strip().lower() for email in user_emails if re.match(email_regex, email.strip())]))
-    valid_calendar_ids = list(set([cal_id.strip() for cal_id in calendar_ids if '@' in cal_id]))
+    initial_valid_ids = list(set([cal_id.strip() for cal_id in calendar_ids if '@' in cal_id]))
+    valid_calendar_ids = [
+        cal_id for cal_id in initial_valid_ids if cal_id not in IGNORED_CALENDAR_IDS
+    ]
+
+    ignored_count = len(initial_valid_ids) - len(valid_calendar_ids)
+    if ignored_count > 0:
+        logger.warning(f"Removidos {ignored_count} calendários da operação pois estão na lista de ignorados.")
+
+    if not valid_user_emails or not valid_calendar_ids:
+        return {}, {"input_error": "Nenhum e-mail ou ID de calendário válido fornecido após a validação e filtragem."}
 
     if not valid_user_emails or not valid_calendar_ids:
         return {}, {"input_error": "Nenhum e-mail ou ID de calendário válido fornecido após a validação."}

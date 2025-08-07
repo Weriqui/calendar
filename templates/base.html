@@ -4,11 +4,14 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Google Calendar Manager</title>
-    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
     <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
+        [x-cloak] { display: none !important; }
         /* Garante que o overlay de loading fique acima da maioria dos elementos */
         #loading-overlay { z-index: 9998; }
         /* Garante que o toast fique acima de TUDO (incluindo overlay e modais) */
@@ -26,187 +29,472 @@
             to { transform: rotate(360deg); }
         }
     </style>
+    <script>
+        // Colocamos os dados do Flask em um objeto global seguro.
+        window.APP_DATA = {
+            initialCalendars: {{ calendarios|tojson|safe }},
+            uniqueUsers: {{ unique_users_list|tojson|safe }},
+            calendarChoices: {{ calendar_choices_list|tojson|safe }}
+        };
+    </script>
 </head>
-<body class="h-full bg-gray-50 text-gray-900" x-data="appRoot">
-    <header class="bg-white shadow" x-data="{}">
-      <div class="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
-        <h1 class="text-2xl font-semibold">Google Calendar Manager</h1>
-        <nav class="flex gap-4">
-           <button @click="console.log('Botão Criar CLICADO!'); $dispatch('open-modal', 'modal-create')" type="button" class="px-4 py-2 rounded-xl shadow hover:shadow-md bg-indigo-600 text-white">Criar calendário</button>
-           <button @click="console.log('Botão Bulk CLICADO!'); $dispatch('open-modal', 'modal-bulk')" type="button" class="px-4 py-2 rounded-xl shadow hover:shadow-md bg-sky-600 text-white">Ações em Massa</button>
-           </nav>
+<body
+    class="h-full"
+    x-data="calendarApp(window.APP_DATA)"
+    @keydown.escape.window="openModalId = null"
+    x-cloak
+>
+    <div id="loading-overlay" x-show="isLoading" x-transition class="fixed inset-0 bg-gray-800/75 z-50 flex items-center justify-center">
+        <div class="flex flex-col items-center space-y-4 p-6 bg-gray-900/80 rounded-xl">
+            <div class="spinner"></div>
+            <span class="text-white text-lg font-medium" x-text="loadingMessage"></span>
+        </div>
+    </div>
+    <div id="toast-container" ></div>
+    <header class="bg-white/80 backdrop-blur-sm shadow-sm sticky top-0 z-40">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-3">
+        <div class="flex items-center justify-between">
+            <h1 class="text-2xl font-bold tracking-tight text-slate-900">Google Calendar Manager</h1>
+            <nav class="flex items-center gap-4">
+                <button @click="openModalId = 'modal-create'" type="button" class="px-4 py-2 rounded-lg shadow-sm hover:shadow-md bg-sky-600 text-white font-semibold transition-all hover:bg-sky-700">
+                    Criar Calendário
+                </button>
+                <button @click="resetBulkModal(); openModalId = 'modal-bulk'" type="button" class="px-4 py-2 rounded-lg shadow-sm hover:shadow-md bg-indigo-600 text-white font-semibold transition-all hover:bg-indigo-700">
+                    Ações em Massa
+                </button>
+            </nav>
+        </div>
       </div>
     </header>
 
-    <main class="mx-auto max-w-7xl p-6">
+    <main class="mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
       {% block content %}{% endblock %}
     </main>
 
     {% include "modals.html" %}
 
-    <div id="toast-container" x-data="{ shown: false, message:'', type:'success' }" x-show="shown" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 transform scale-90" x-transition:enter-end="opacity-100 transform scale-100" x-transition:leave="transition ease-in duration-200" x-transition:leave-start="opacity-100 transform scale-100" x-transition:leave-end="opacity-0 transform scale-90" x-on:toast.window="message=$event.detail.msg; type=$event.detail.type || 'info'; shown=true; setTimeout(()=>shown=false,4000)" :class="{ 'bg-red-600': type === 'error', 'bg-green-600': type === 'success', 'bg-blue-500': type === 'info', 'bg-yellow-500': type === 'warning' }" class="fixed top-5 left-1/2 -translate-x-1/2 max-w-md w-auto min-w-[250px] text-white px-5 py-3 rounded-lg shadow-lg text-center text-sm font-medium" style="display: none;">
-        <span x-text="message"></span>
-    </div>
-
-    <div id="loading-overlay" x-show="$store.appState.loading" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100" x-transition:leave="transition ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0" class="fixed inset-0 bg-gray-800/75 backdrop-blur-sm flex items-center justify-center" style="display: none;" aria-live="assertive" aria-atomic="true" role="alertdialog" aria-labelledby="loading-message">
-        <div class="flex flex-col items-center space-y-4 p-6 bg-gray-900/80 rounded-xl shadow-xl"> <div class="spinner"></div>
-            <span id="loading-message" class="text-white text-lg font-medium" x-text="$store.appState.loadingMessage || 'Processando...'">Processando...</span>
-        </div>
-    </div>
-</body>
 <script>
-    document.addEventListener('alpine:init', () => {
-        console.log("Alpine init: Definindo store e componentes...");
+document.addEventListener('alpine:init', () => {
+    Alpine.data('choices', (options = {}) => ({
+        isInitialized: false,
+        choicesInstance: null,
 
-        // --- Estado Global Alpine ---
-        Alpine.store('appState', {
-            loading: false,
-            loadingMessage: 'Processando...', // Mensagem padrão
-            // Pode adicionar outros estados globais aqui se precisar
-        });
-
-        Alpine.data('appRoot', () => ({
-			init() {
-				console.log('appRoot Alpine component initialized.');
-				window.addEventListener('start-loading', (event) => {
-					console.log("Event 'start-loading' received by appRoot", event.detail);
-					const { formElement, message } = event.detail || {};
-					this.startLoading(formElement, message); // Chama o método abaixo
-				});
-				window.addEventListener('stop-loading', (event) => {
-					console.log("Event 'stop-loading' received by appRoot", event.detail);
-					const { formElement } = event.detail || {};
-					this.stopLoading(formElement); // Chama o método abaixo
-				});
-			},
-			// Métodos para controlar o loading DENTRO do Alpine
-			startLoading(formElement = null, message = 'Processando...') {
-				console.log("Alpine startLoading:", message);
-				Alpine.store('appState').loadingMessage = message;
-				Alpine.store('appState').loading = true; // Modifica o store DENTRO do Alpine
-
-				if (formElement) { /* ... desabilitar elementos ... */ }
-				document.querySelectorAll('header button').forEach(btn => btn.disabled = true);
-			},
-			stopLoading(formElement = null) {
-				console.log("Alpine stopLoading");
-				if (formElement) { /* ... habilitar elementos ... */ }
-				document.querySelectorAll('header button').forEach(btn => btn.disabled = false);
-				// O delay pode não ser mais necessário aqui, pois a mudança é reativa
-				Alpine.store('appState').loading = false;
-			}
-		}));
-
-
-        // --- Definição do Componente Modal Genérico ---
-        // (Este controla o 	abrir/fechar baseado em eventos)
-        Alpine.data('modal', id => ({
-            open: false,
-            init() {
-                // Ouve pelo evento global para abrir este modal específico
-                const openHandler = (e) => {
-                    if (e.detail === id) {
-                        console.log(`Abrindo modal: ${id}`);
-                        this.open = true;
-                        // Opcional: Trazer foco para o primeiro input do modal ao abrir
-                        this.$nextTick(() => {
-                             const firstInput = this.$el.querySelector('input, select, textarea');
-                             if (firstInput) firstInput.focus();
-                        });
+        init() {
+            if (this.isInitialized) return;
+            const resetHandler = (event) => {
+                // Ouve um evento e só age se o ID do evento corresponder ao ID deste elemento
+                if (event.detail && event.detail.id === this.$el.id) {
+                    console.log(`Choices component #${this.$el.id} recebeu um comando de reset.`);
+                    if (this.choicesInstance) {
+                        // Usa a API do Choices.js para limpar tudo
+                        this.choicesInstance.clearStore();
+                        this.choicesInstance.clearInput();
+                        
+                        // Repopula as opções originais que foram apagadas pelo clearStore
+                        if (options.choices && options.choices.length > 0) {
+                            this.choicesInstance.setChoices(options.choices, 'value', 'label', false);
+                        }
                     }
-                };
-                // Ouve pelo evento global para fechar este modal específico
-                const closeHandler = (e) => {
-                    if (e.detail === id) {
-                        console.log(`Fechando modal: ${id}`);
-                        this.open = false;
-                    }
-                };
-                // Listener para fechar com ESC
-                const escapeHandler = (e) => {
-                   if (e.key === 'Escape' && this.open) {
-                        console.log(`Fechando modal ${id} via ESC`);
-                        this.open = false;
-                   }
-                };
+                }
+            };
+            window.addEventListener('reset-choices', resetHandler);
 
-                window.addEventListener('open-modal', openHandler);
-                window.addEventListener('close-modal', closeHandler);
-                window.addEventListener('keydown', escapeHandler);
+            // Adiciona um filtro padrão para validar e-mails se a opção addItems estiver ativa
+            if (options.addItems && !options.addItemFilter) {
+                options.addItemFilter = (value) => {
+                    if (!value) return false;
+                    const regex = /^(([^<>()[\]\\.,;:\s@"]+(\.[^<>()[\]\\.,;:\s@"]+)*)|(".+"))@((\[[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\])|(([a-zA-Z\-0-9]+\.)+[a-zA-Z]{2,}))$/;
+                    return regex.test(String(value).toLowerCase());
+                };
+            }
 
-                // Cleanup: Remove listeners quando o elemento Alpine é destruído
-                // Importante se os modais forem adicionados/removidos dinamicamente
-                this.$watch('open', (isOpen) => {
-                    // Controla overflow do body para evitar scroll duplo
-                    if (isOpen) {
-                        document.body.style.overflow = 'hidden';
-                    } else {
-                        document.body.style.overflow = '';
+            this.choicesInstance = new Choices(this.$el, options);
+            const choices = this.choicesInstance; // Atalho
+
+            this.$el.addEventListener('change', () => {
+                const value = choices.getValue(true);
+                this.$dispatch('input', value);
+            });
+
+            // Adiciona listeners para criar chips se a opção addItems estiver habilitada
+            if (options.addItems) {
+                const inputElement = choices.input.element;
+
+                inputElement.addEventListener('keydown', (event) => {
+                    if (event.keyCode === 13 || event.keyCode === 188) { // Enter ou Vírgula
+                        const value = inputElement.value.trim();
+                        if (value) {
+                            event.preventDefault();
+                            if (choices.config.addItemFilter(value)) {
+                                const currentValues = choices.getValue(true);
+                                if (!currentValues.includes(value)) {
+                                    const newValues = choices.setValue([...currentValues, value]);
+                                    choices.setValue(newValues);
+                                    this.$dispatch('input', newValues);
+                                } else {
+                                    choices.clearInput();
+                                }
+                            }
+                        } else if (event.keyCode === 13) {
+                            event.preventDefault();
+                        }
                     }
                 });
 
-                this.$destroy = () => {
-                    console.log(`Destroying listeners for modal ${id}`);
-                    window.removeEventListener('open-modal', openHandler);
-                    window.removeEventListener('close-modal', closeHandler);
-                    window.removeEventListener('keydown', escapeHandler);
-                    document.body.style.overflow = ''; // Garante reset do overflow
-                }
-            },
-            // Função para fechar de dentro do modal (ex: botão cancelar)
-            close() {
-                this.open = false;
+                inputElement.addEventListener('paste', (event) => {
+                    event.preventDefault();
+                    const pastedText = (event.clipboardData || window.clipboardData).getData('text');
+                    const potentialItems = pastedText.split(/[ ,\n]+/).map(item => item.trim()).filter(Boolean);
+
+                    if (potentialItems.length > 0) {
+                        const validItemsToAdd = potentialItems.filter(item => choices.config.addItemFilter(item));
+                        if (validItemsToAdd.length > 0) {
+                            const currentValues = choices.getValue(true);
+                            const combinedValues = [...new Set([...currentValues, ...validItemsToAdd])];
+                            choices.setValue(combinedValues);
+                            this.$dispatch('input', combinedValues);
+                        }
+                    }
+                });
             }
-        }));
 
-        // --- Definição do Componente de Edição (editCal) ---
-        // Se você estiver usando x-data="editCal(...)" no seu index.html ou modals.html,
-        // a definição dele deve vir AQUI dentro do alpine:init.
-        // Adapte o código da função editCal que você tinha para o formato Alpine.data
-        Alpine.data('editCal', (id, currentName) => ({
-            // ... (copie/adapte a lógica interna da função editCal aqui) ...
-            // Lembre-se de chamar window.startLoading(this.$el, '...') no início do submit
-            // e window.stopLoading(this.$el) no final (catch/finally).
-            // Exemplo:
-             name: currentName,
-             users: [],
-             addUsersChoicesInstance: null, // Mantenha estado das instâncias Choices aqui
+            this.isInitialized = true;
 
-             async init() {
-                 // ... lógica para buscar usuários e inicializar Choices para este modal ...
-                 // (Use this.addUsersChoicesInstance para guardar a instância)
-             },
-             destroyChoices() {
-                 // ... lógica para destruir a instância Choices deste modal ...
-                 if (this.addUsersChoicesInstance) { this.addUsersChoicesInstance.destroy(); this.addUsersChoicesInstance = null;}
-             },
-             addCustomInputListeners(choicesInstance) {
-                // ... lógica para adicionar listeners keydown/paste ...
-             },
-             async submit() {
-                  const formElement = this.$el; // O <form>
-                  window.startLoading(formElement, 'Salvando alterações...');
-                  try {
-                      // ... Lógica de submit para editar nome, adicionar/remover usuários ...
-                      // ... Chamadas fetch ...
-                      // ... Disparar toasts ...
-                      // ... Reload ou fechar modal ...
-                  } catch (error) {
-                       // ... Mostrar erro ...
-                  } finally {
-                      // Garante que o loading pare mesmo se houver erro não pego
-                      window.stopLoading(formElement);
-                  }
-             },
-             removeUser(emailToRemove) {
-                  // ... Lógica para remover usuário (também pode usar start/stop loading) ...
-             },
-             handleClose() { // Associar ao botão cancelar ou @click.outside se necessário
-                  this.$dispatch('close-modal', `modal-edit-${id}`); // Dispara evento global para fechar
-                  this.destroyChoices(); // Limpa Choices ao fechar
-             }
-        })); // Fim de Alpine.data('editCal')
+            this.$destroy = () => {
+                window.removeEventListener('reset-choices', resetHandler);
+            };
+        }
+    }));
 
-    }); // Fim de alpine:init
+    Alpine.data('calendarApp', (data) => ({
+        // --- Estado Principal (Dados do Backend) ---
+        allCalendars: data.initialCalendars,
+        uniqueUsers: data.uniqueUsers,
+        calendarChoices: data.calendarChoices,
+        
+        // --- Estado dos Filtros ---
+        searchText: '',
+        selectedUsers: [],
+        userFilterMode: 'contains', // 'contains' ou 'not-contains'
+        selectedCalendars: [],
+
+        // --- ESTADO GLOBAL ---
+        openModalId: null,
+        isLoading: false,
+        loadingMessage: 'Processando...',
+        
+        // --- ESTADO DO MODAL DE AÇÕES EM MASSA ---
+        bulk: {
+            calendars: [],
+            action: '',
+            users: [],
+            role: 'writer',
+            userChoices: [], // Opções de usuários para as ações 'remover' e 'editar'
+            isLoadingUsers: false // Flag para mostrar um estado de "carregando"
+        },
+
+        // --- ESTADO DO MODAL DE EDIÇÃO INDIVIDUAL ---
+        editing: {
+            calendar: null,
+            originalUsers: [],
+            users: [],
+            newName: '',
+            usersToAdd: []
+        },
+        // --- Inicialização do Componente ---
+        init() {
+            console.log("Alpine App Initialized com sucesso!");
+            this.$nextTick(() => {
+                if(this.$refs.cardsContainer) {
+                    gsap.from(this.$refs.cardsContainer.children, {
+                        duration: 0.5, opacity: 0, y: 30, stagger: 0.05, ease: "power2.out"
+                    });
+                }
+            });
+
+            this.$watch('selectedCalendars', (newValue) => {
+                console.log(` perubahan 4. selectedCalendars foi ATUALIZADO para:`, newValue);
+            });
+            this.$watch('bulk.calendars', (newValue) => {
+                console.log('Calendários alterados. Resetando os passos 2, 3 e 4.');
+                // Reseta a AÇÃO, o que vai acionar o próximo watcher em cascata
+                this.bulk.action = ''; 
+                
+                // Força a limpeza dos usuários, caso a ação não mude (ex: de 1 para 2 calendários)
+                this.bulk.users = []; 
+            });
+
+            this.$watch('bulk.action', (newValue) => {
+                console.log(`Ação alterada para '${newValue}'. Resetando o passo 3 e buscando novos usuários se necessário.`);
+                // O watcher de 'bulk.action' agora só precisa chamar a função que busca/limpa a lista de usuários.
+                this.updateBulkUserChoices();
+            });
+            
+            // Listeners globais para controlar os modais
+            window.addEventListener('open-modal', (event) => this.openModalId = event.detail);
+            window.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape' && this.openModalId) {
+                    this.openModalId = null;
+                }
+            });
+        },
+        async updateBulkUserChoices() {
+            const { action, calendars } = this.bulk;
+            console.log(`UPDATE: Ação é '${action}', ${calendars.length} calendários selecionados.`);
+
+            // Limpa a seleção de usuários anterior para evitar inconsistências
+            this.bulk.users = []; 
+
+            if ((action === 'remover' || action === 'editar') && calendars.length > 0) {
+                this.bulk.isLoadingUsers = true;
+                this.bulk.userChoices = [{ value: '', label: 'Carregando usuários...', disabled: true }];
+                try {
+                    const response = await fetch('/acl/users_for_calendars', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ calendars: calendars })
+                    });
+                    if (!response.ok) throw new Error('Falha na resposta da rede');
+                    const data = await response.json();
+                    
+                    // Atualiza as opções com os usuários recebidos
+                    this.bulk.userChoices = data.users.length > 0 ? data.users : [{value: '', label: 'Nenhum usuário em comum encontrado', disabled: true}];
+                
+                } catch (error) {
+                    console.error("Erro ao buscar usuários para bulk:", error);
+                    this.bulk.userChoices = [{ value: '', label: 'Erro ao carregar usuários', disabled: true }];
+                } finally {
+                    this.bulk.isLoadingUsers = false;
+                }
+            } else {
+                // Para a ação 'adicionar' ou se nenhum calendário for selecionado,
+                // o campo de usuários fica vazio, pronto para receber novos emails.
+                this.bulk.userChoices = [];
+            }
+        },
+
+        // --- Getters (Propriedades Computadas) ---
+        get filteredCalendars() {
+            console.log("🔄 5. Calculando `filteredCalendars`...");
+            // Começa com todos os calendários
+            let calendars = this.allCalendars;
+
+            // 1. Filtro por SELETOR DE CALENDÁRIOS (se algum for selecionado)
+            if (this.selectedCalendars.length > 0) {
+                console.log(`   ➡️ Filtrando por ${this.selectedCalendars.length} calendários selecionados.`);
+                calendars = calendars.filter(cal => this.selectedCalendars.includes(cal.id));
+            }
+
+            // 2. Filtro por TEXTO DE BUSCA
+            if (this.searchText.trim() !== '') {
+                const searchLower = this.searchText.toLowerCase();
+                calendars = calendars.filter(cal => cal.summary.toLowerCase().includes(searchLower));
+            }
+
+            // 3. Filtro por USUÁRIOS
+            if (this.selectedUsers.length > 0) {
+                calendars = calendars.filter(cal => {
+                    const calendarUserEmails = cal.users.map(u => u.email);
+                    
+                    if (this.userFilterMode === 'contains') {
+                        // O calendário DEVE conter TODOS os usuários selecionados
+                        return this.selectedUsers.every(selectedUser => calendarUserEmails.includes(selectedUser));
+                    } else { // 'not-contains'
+                        // O calendário NÃO PODE conter NENHUM dos usuários selecionados
+                        return !this.selectedUsers.some(selectedUser => calendarUserEmails.includes(selectedUser));
+                    }
+                });
+            }
+            console.log(`   ➡️ Final: ${calendars.length} calendários para exibir.`);
+            return calendars;
+        },
+
+        get stats() {
+            const superUsers = this.allCalendars.flatMap(c => c.users.map(u => u.email))
+                .reduce((acc, email) => {
+                    acc[email] = (acc[email] || 0) + 1;
+                    return acc;
+                }, {});
+            return {
+                calendarCount: this.allCalendars.length,
+                userCount: this.uniqueUsers.length,
+                topUsers: Object.entries(superUsers).sort((a, b) => b[1] - a[1]).slice(0, 3)
+            };
+        },
+        // --- LÓGICA DE GERENCIAMENTO ---
+
+        // Abre e prepara o modal de edição individual
+        openEditModal(calendar) {
+            console.log("Abrindo modal de edição para:", calendar.summary);
+            this.editing.calendar = calendar;
+            // Clona profundamente os usuários para detectar mudanças depois
+            this.editing.originalUsers = JSON.parse(JSON.stringify(calendar.users));
+            this.editing.users = JSON.parse(JSON.stringify(calendar.users));
+            this.editing.newName = calendar.summary;
+            this.editing.usersToAdd = [];
+            this.openModalId = 'modal-edit';
+        },
+        resetBulkModal() {
+            console.log("Resetando estado do modal de ações em massa.");
+            // 1. Reseta o estado de dados do Alpine
+            this.bulk.calendars = [];
+            this.bulk.action = '';
+            this.bulk.users = [];
+            this.bulk.role = 'writer';
+            this.bulk.userChoices = [];
+            this.bulk.isLoadingUsers = false;
+
+            // 2. Aguarda o DOM ser atualizado e então reseta o estado VISUAL do Choices.js
+            window.dispatchEvent(new CustomEvent('reset-choices', { 
+                detail: { id: 'bulk-calendars-select' } 
+            }));
+        },
+
+        // Remove um usuário da lista no modal de edição
+        removeUserFromEditList(email) {
+            this.editing.users = this.editing.users.filter(u => u.email !== email);
+        },
+
+        // Submete o formulário de Ações em Massa
+        async submitBulkForm() {
+            this.isLoading = true;
+            this.loadingMessage = 'Executando ações em massa...';
+
+            try {
+                // ... (validações do formulário bulk) ...
+                const payload = {
+                    calendars: this.bulk.calendars,
+                    action: this.bulk.action,
+                    users: this.bulk.users,
+                    role: this.bulk.role
+                };
+                const response = await fetch('/acl/bulk', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || 'Erro no servidor');
+                
+                // Sucesso
+                this.openModalId = null;
+                // Disparar toast de sucesso e recarregar a página
+                setTimeout(() => window.location.reload(), 1500);
+
+            } catch (error) {
+                console.error("Erro na operação em massa:", error);
+                // Disparar toast de erro
+            } finally {
+                this.isLoading = false;
+            }
+        },
+
+        // Submete o formulário de Edição Individual
+        async submitEditForm() {
+            this.isLoading = true;
+            this.loadingMessage = 'Salvando alterações...';
+
+            // Cria uma cópia das variáveis para evitar problemas de reatividade
+            const { calendar, newName, usersToAdd, originalUsers, users } = this.editing;
+            const calId = calendar.id;
+            let changesMade = false;
+
+            try {
+                // --- 1. Renomear calendário (se o nome mudou) ---
+                if (newName.trim() && newName.trim() !== calendar.summary) {
+                    this.loadingMessage = 'Renomeando calendário...';
+                    console.log(`Renomeando de "${calendar.summary}" para "${newName.trim()}"`);
+                    const formData = new FormData();
+                    formData.append('name', newName.trim());
+                    await fetch(`/calendar/${calId}/rename`, { method: 'POST', body: formData });
+                    changesMade = true;
+                }
+
+                // --- 2. Adicionar novos usuários ---
+                if (usersToAdd.length > 0) {
+                    this.loadingMessage = `Adicionando ${usersToAdd.length} novo(s) usuário(s)...`;
+                    console.log("Adicionando usuários:", usersToAdd);
+                    await fetch('/acl/bulk', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ calendars: [calId], action: 'adicionar', users: usersToAdd, role: 'writer' }) // 'writer' como padrão
+                    });
+                    changesMade = true;
+                }
+                
+                // ====================================================================
+                // ▼▼▼ INÍCIO DA LÓGICA COMPLETA DE EDIÇÃO E REMOÇÃO ▼▼▼
+                // ====================================================================
+
+                // --- 3. Detectar e aplicar REMOÇÕES ---
+                const finalUserEmails = new Set(users.map(u => u.email));
+                const removedUsers = originalUsers.filter(u => !finalUserEmails.has(u.email));
+                
+                if (removedUsers.length > 0) {
+                    const emailsToRemove = removedUsers.map(u => u.email);
+                    this.loadingMessage = `Removendo ${emailsToRemove.length} usuário(s)...`;
+                    console.log("Removendo usuários:", emailsToRemove);
+                    await fetch('/acl/bulk', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ calendars: [calId], action: 'remover', users: emailsToRemove, role: '' })
+                    });
+                    changesMade = true;
+                }
+
+                // --- 4. Detectar e aplicar EDIÇÕES de permissão ---
+                const usersToEdit = [];
+                for (const finalUser of users) {
+                    const originalUser = originalUsers.find(u => u.email === finalUser.email);
+                    // Verifica se o usuário existia antes e se a permissão mudou
+                    if (originalUser && originalUser.role !== finalUser.role) {
+                        usersToEdit.push({ email: finalUser.email, newRole: finalUser.role });
+                    }
+                }
+
+                if (usersToEdit.length > 0) {
+                    // A API de lote não permite enviar uma permissão diferente para cada usuário
+                    // na mesma chamada. Portanto, precisamos fazer uma chamada por permissão alterada.
+                    // Agrupamos por nova permissão para otimizar.
+                    const editsByRole = usersToEdit.reduce((acc, user) => {
+                        if (!acc[user.newRole]) {
+                            acc[user.newRole] = [];
+                        }
+                        acc[user.newRole].push(user.email);
+                        return acc;
+                    }, {});
+
+                    this.loadingMessage = `Atualizando ${usersToEdit.length} permissão(ões)...`;
+                    console.log("Editando usuários:", editsByRole);
+
+                    for (const [role, emails] of Object.entries(editsByRole)) {
+                        await fetch('/acl/bulk', {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ calendars: [calId], action: 'editar', users: emails, role: role })
+                        });
+                    }
+                    changesMade = true;
+                }
+                
+                // ====================================================================
+                // ▲▲▲ FIM DA LÓGICA COMPLETA DE EDIÇÃO E REMOÇÃO ▲▲▲
+                // ====================================================================
+
+                // --- Finalização ---
+                this.openModalId = null;
+                if (changesMade) {
+                    // Disparar toast de sucesso
+                    console.log("Sucesso! Recarregando a página...");
+                    setTimeout(() => window.location.reload(), 1500);
+                }
+
+            } catch (error) {
+                console.error("Erro ao salvar calendário:", error);
+                // Disparar toast de erro
+            } finally {
+                this.isLoading = false;
+            }
+        }
+    }));
+});
 </script>
+</body>
 </html>

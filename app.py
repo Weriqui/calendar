@@ -18,37 +18,46 @@ app = Flask(__name__)
 
 @app.route("/")
 def index():
-    """Renderiza todos os calendários em cards."""
-    try: # Adicionar try/except para a busca de calendários
-        cals = calendarios()
-        if cals is None: # Tratar caso onde calendarios() retorna None
-           cals = []
-           app.logger.warning("A função calendarios() retornou None.")
-           # Você pode querer mostrar uma mensagem de erro para o usuário aqui
-    except Exception as e:
-        app.logger.error(f"Erro ao buscar lista de calendários: {e}")
-        cals = [] # Define como lista vazia em caso de erro
-        # Mostrar mensagem de erro para o usuário
-        # from flask import flash
-        # flash('Erro ao carregar seus calendários.', 'error')
+    """Renderiza a página principal com todos os dados para o frontend."""
+    try:
+        all_cals = calendarios()
+        if all_cals is None:
+            all_cals = []
 
-    # Prepara a lista de dicionários Python para as opções do Choices.js
-    # Garantir que cals é uma lista antes de iterar
-    calendar_choices_list = []
-    if isinstance(cals, list):
+        unique_users = {}
+        
+        # Agrupa usuários por calendário e coleta usuários únicos
+        for cal in all_cals:
+            # Anexa a lista de usuários a cada objeto de calendário
+            users_in_cal = listar_usuarios_calendario(cal.get('id'))
+            cal['users'] = users_in_cal
+            
+            # Adiciona os usuários a um dicionário para garantir unicidade
+            for user in users_in_cal:
+                email = user.get('email')
+                if email not in unique_users:
+                    unique_users[email] = {'value': email, 'label': email}
+
+        # Converte o dicionário de usuários únicos em uma lista para o Choices.js
         calendar_choices_list = [
-            # Usar .get() para acesso seguro caso a chave não exista
             {'value': cal.get('id'), 'label': cal.get('summary', 'Nome Indisponível')}
-            for cal in cals if cal.get('id') # Garante que há um ID
+            for cal in all_cals if cal.get('id')
         ]
-    else:
-        app.logger.error(f"Esperava uma lista de calendários, mas recebeu: {type(cals)}")
+        
+        unique_users_list = list(unique_users.values())
 
+    except Exception as e:
+        app.logger.error(f"Erro ao buscar dados para a página inicial: {e}", exc_info=True)
+        all_cals = []
+        calendar_choices_list = []
+        unique_users_list = []
+        # Adicionar um flash message de erro aqui seria uma boa prática
 
     return render_template(
         "index.html",
-        calendarios=cals, # Lista original para os cards
-        calendar_choices_list=calendar_choices_list # Lista formatada para o JS
+        calendarios=all_cals,
+        calendar_choices_list=calendar_choices_list,
+        unique_users_list=unique_users_list # Nova variável para os filtros
     )
 
 
