@@ -202,3 +202,12 @@
 2025-08-07 11:26:27,939 - funcoes_google - INFO - Executing batch request for 1 calendars...
 2025-08-07 11:26:28,159 - funcoes_google - INFO - Batch execution finished in 0.22 seconds.
 2025-08-07 11:26:28,159 - funcoes_google - INFO - Batch processing complete in 0.22 seconds. Found 3 unique users.
+2025-08-07 12:00:10,075 - funcoes_google - INFO - Input validado. Processando 'adicionar' para 1 usuários em 1 calendários.
+2025-08-07 12:00:10,076 - funcoes_google - INFO - Input validated. Processing adicionar for 1 users on 1 calendars.
+2025-08-07 12:00:10,312 - funcoes_google - INFO - Batch execution for phase 'get_all_acls' SUCCESSFUL in 0.24 seconds.
+2025-08-07 12:00:10,313 - funcoes_google - INFO - Executing batch with 1 operations for calendar c_350c3cf8a78c12c4646a5f97ed3170e2f10fe3dd9975cea71fb1e0710095e65c@group.calendar.google.com.
+2025-08-07 12:00:10,314 - funcoes_google - INFO - Item Retry Attempt 1/11 for 1 pending operations (adicionar-c_350c3cf8a78c12c4646a5f97ed3170e2f10fe3dd9975cea71fb1e0710095e65c@group.calendar.google.com).
+2025-08-07 12:00:11,138 - funcoes_google - INFO - Batch execution for phase 'adicionar-c_350c3cf8a78c12c4646a5f97ed3170e2f10fe3dd9975cea71fb1e0710095e65c@group.calendar.google.com_item_attempt_1' SUCCESSFUL in 0.82 seconds.
+2025-08-07 12:00:11,138 - funcoes_google - INFO - Item retry loop finished. Success: 1, Final Failures: 0.
+2025-08-07 12:00:11,139 - funcoes_google - INFO - CACHE INVALIDATED for calendar c_350c3cf8a78c12c4646a5f97ed3170e2f10fe3dd9975cea71fb1e0710095e65c@group.calendar.google.com due to successful modification.
+2025-08-07 12:00:11,139 - funcoes_google - INFO - Batch modification process finished.
